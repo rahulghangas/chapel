@@ -1264,6 +1264,8 @@ buildReduceScanPreface1(FnSymbol* fn, Symbol* data, Symbol* eltType,
   adjustMinMaxReduceOp(opExpr);
   eltType->addFlag(FLAG_MAYBE_TYPE);
   fn->insertAtTail(new DefExpr(eltType));
+  fn->insertAtTail(new DefExpr(data));
+  fn->insertAtTail("'move'(%S, %E)", data, dataExpr);
 
   if( !zippered ) {
     fn->insertAtTail("{TYPE 'move'(%S, 'typeof'(chpl__initCopy(iteratorIndex(_getIterator(%S)))))}", eltType, data);
@@ -1295,10 +1297,33 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
 // vass todo: since this holds, no need to pass zippered to PRIM_REDUCE below.
   INT_ASSERT(zippered == (isCallExpr(dataExpr) &&
                           toCallExpr(dataExpr)->isPrimitive(PRIM_ZIP)));
+  static int fn_num = 1;
 
-  adjustMinMaxReduceOp(opExpr);
+  FnSymbol* fn = new FnSymbol(astr("chpl_reduce", istr(fn_num++)));
+  fn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
+  fn->addFlag(FLAG_INLINE);
+
+  VarSymbol* data = newTemp("_reducedata");
+  VarSymbol* eltType = newTemp();
+
+  buildReduceScanPreface1(fn, data, eltType, opExpr, dataExpr, zippered);
+  buildGpuReduceExpr(fn, data, eltType, opExpr, dataExpr);
+
+
+
+
   return new CallExpr(PRIM_REDUCE, opExpr, dataExpr,
                       zippered ? gTrue : gFalse);
+}
+
+static
+CallExpr* buildGpuReduceExpr(FnSymbol* fn, VarSymbol* data, VarSymbol* eltType, Expr* opExpr, Expr* dataExpr){
+  static int fn_num = 1;
+  FnSymbol* fn = new FnSymbol(astr("gpu_reduce", istr(fn_num++)));
+  fn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
+  fn->addFlag(FLAG_INLINE);
+
+  
 }
 
 
