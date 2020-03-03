@@ -1310,8 +1310,6 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   buildGpuReduceExpr(fn, data, eltType, opExpr, dataExpr);
 
 
-
-
   return new CallExpr(PRIM_REDUCE, opExpr, dataExpr,
                       zippered ? gTrue : gFalse);
 }
@@ -1323,7 +1321,11 @@ CallExpr* buildGpuReduceExpr(FnSymbol* fn, VarSymbol* data, VarSymbol* eltType, 
   fn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
   fn->addFlag(FLAG_INLINE);
 
+  VarSymbol* array = newTemp("array");
+  fn->insertAtTail(new DefExpr(array));
+
   
+
 }
 
 
