@@ -1307,11 +1307,25 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   VarSymbol* eltType = newTemp();
 
   buildReduceScanPreface1(fn, data, eltType, opExpr, dataExpr, zippered);
-  buildGpuReduceExpr(fn, data, eltType, opExpr, dataExpr);
+  CallExpr * gpu_reduce = buildGpuReduceExpr(fn, data, eltType, opExpr, dataExpr);
 
+  VarSymbol* is_gpu = newTemp("_is_gpu");
+  fn->insertAtTail(new DefExpr(is_gpu));
+  fn->insertAtTail(new CallExpr(PRIM_MOVE, is_gpu,
+                                new CallExpr(PRIM_IS_GPU_SUBLOCALE)));
 
-  return new CallExpr(PRIM_REDUCE, opExpr, dataExpr,
-                      zippered ? gTrue : gFalse);
+  VarSymbol* resultcpu = new VarSymbol("_resultcpu");
+  VarSymbol* resultgpu = new VarSymbol("_resultgpu");
+  BlockStmt* thenBlock = buildChapelStmt();
+  thenBlock->insertAtTail(new DefExpr(resultgpu, gpu_reduce));
+  thenBlock->insertAtTail("'return'(%S)", resultgpu);
+  BlockStmt* elseBlock = buildChapelStmt();
+  elseBlock->insertAtTail(new CallExpr(PRIM_REDUCE, opExpr, dataExpr,
+                      zippered ? gTrue : gFalse));
+  fn->insertAtTail(new CondStmt(new SymExpr(is_gpu),
+                                thenBlock, elseBlock));
+
+  return new CallExpr(new DefExpr(fn));
 }
 
 static
