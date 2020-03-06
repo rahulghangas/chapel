@@ -1118,6 +1118,9 @@ initPrimitive() {
   prim_def(PRIM_GATHER_TESTS, "gather tests", returnInfoDefaultInt);
   prim_def(PRIM_GET_TEST_BY_NAME, "get test by name", returnInfoVoid);
   prim_def(PRIM_GET_TEST_BY_INDEX, "get test by index", returnInfoVoid);
+  
+  prim_def(PRIM_GPU_REDUCE, "gpu_reduce", returnInfoFirst, true, true);
+  prim_def(PRIM_IS_GPU, "is_gpu", returnInfoBool, true, true);
 }
 
 static Map<const char*, VarSymbol*> memDescsMap;

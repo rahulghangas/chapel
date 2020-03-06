@@ -1312,7 +1312,7 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   VarSymbol* is_gpu = newTemp("_is_gpu");
   fn->insertAtTail(new DefExpr(is_gpu));
   fn->insertAtTail(new CallExpr(PRIM_MOVE, is_gpu,
-                                new CallExpr(PRIM_IS_GPU_SUBLOCALE)));
+                                new CallExpr(PRIM_IS_GPU)));
 
   VarSymbol* resultcpu = new VarSymbol("_resultcpu");
   VarSymbol* resultgpu = new VarSymbol("_resultgpu");

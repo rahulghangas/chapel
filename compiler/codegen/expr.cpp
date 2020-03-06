@@ -783,6 +783,24 @@ llvm::LoadInst* codegenLoadLLVM(GenRet ptr,
 #endif
 
 static
+GenRet codegenIsGPUSublocale(void)
+{
+  GenRet ret =  codegenCallExpr("chpl_gen_isGPUSublocale");
+  ret.chplType = dtBool;
+#ifdef HAVE_LLVM
+  GenInfo* info = gGenInfo;
+  if (!info->cfile ) {
+    // Make sure that the result of gen_getLocaleID is
+    // the right type (since clang likes to fold int32/int32 into int32).
+    GenRet expectType = dtBool;
+    ret.val = convertValueToType(ret.val, expectType.type);
+    assert(ret.val);
+  }
+#endif
+  return ret;
+}
+
+static
 GenRet codegenUseGlobal(const char* global)
 {
   GenInfo* info = gGenInfo;
@@ -5450,6 +5468,31 @@ GenRet CallExpr::codegenPrimMove() {
 #ifdef HAVE_LLVM
         codegenStoreLLVM(specRet, get(1));
 #endif
+      }
+    }else if (rhsCe->isPrimitive(PRIM_IS_GPU)){
+      codegenAssign(get(1), codegenIsGPUSublocale());
+    }else if (rhsCe->isPrimitive(PRIM_GPU_REDUCE)){
+      Type *data_type = this->get(1)->typeInfo();
+      /*FIXME: After gpu kernels for all possible reductions have
+      * been implemented, remove this conditional.
+      */
+      if (is_int_type(data_type)) {
+        std::string reduce_fn = "gpu_reduce_int" +
+          numToString(get_width(data_type));
+        SymExpr* actual = toSymExpr(this->get(2));
+        VarSymbol* var_op = toVarSymbol(actual->var);
+        VarSymbol* var_src = toVarSymbol(toSymExpr(this->get(3))->var);
+        VarSymbol* var_len = toVarSymbol(toSymExpr(this->get(4))->var);
+        INT_ASSERT(var_op != NULL);
+        INT_ASSERT(var_src != NULL);
+        GenRet r = codegenCallExpr(reduce_fn.c_str(),
+                                  var_op,
+                                  var_src,
+                                  var_len);
+        codegenAssign(get(1), r);
+      } else {
+        INT_FATAL(data_type, "gpu reduction not implemented for given "
+                            "element type");
       }
     }
     else {
