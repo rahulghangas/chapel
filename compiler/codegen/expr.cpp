@@ -38,6 +38,7 @@
 #include "virtualDispatch.h"
 #include "WhileStmt.h"
 #include "wellknown.h"
+#include "stdio.h"
 
 #ifdef HAVE_LLVM
 #include "llvm/IR/Module.h"
@@ -5470,8 +5471,10 @@ GenRet CallExpr::codegenPrimMove() {
 #endif
       }
     }else if (rhsCe->isPrimitive(PRIM_IS_GPU)){
+      std::cout << "Checking GPU" << std::endl;
       codegenAssign(get(1), codegenIsGPUSublocale());
     }else if (rhsCe->isPrimitive(PRIM_GPU_REDUCE)){
+      std::cout << "Calling OpenCL/CUDA" << std::endl;
       Type *data_type = this->get(1)->typeInfo();
       /*FIXME: After gpu kernels for all possible reductions have
       * been implemented, remove this conditional.
@@ -5480,9 +5483,9 @@ GenRet CallExpr::codegenPrimMove() {
         std::string reduce_fn = "gpu_reduce_int" +
           numToString(get_width(data_type));
         SymExpr* actual = toSymExpr(this->get(2));
-        VarSymbol* var_op = toVarSymbol(actual->var);
-        VarSymbol* var_src = toVarSymbol(toSymExpr(this->get(3))->var);
-        VarSymbol* var_len = toVarSymbol(toSymExpr(this->get(4))->var);
+        VarSymbol* var_op = toVarSymbol(actual->symbol());
+        VarSymbol* var_src = toVarSymbol(toSymExpr(this->get(3))->symbol());
+        VarSymbol* var_len = toVarSymbol(toSymExpr(this->get(4))->symbol());
         INT_ASSERT(var_op != NULL);
         INT_ASSERT(var_src != NULL);
         GenRet r = codegenCallExpr(reduce_fn.c_str(),

@@ -129,7 +129,9 @@ BlockStmt* buildSelectStmt(Expr* s, BlockStmt* whenstmts);
 
 CallExpr* buildReduceExpr(Expr* op, Expr* data, bool zippered = false);
 CallExpr* buildScanExpr(Expr* op, Expr* data, bool zippered = false);
-
+std::string specialStringConcat(std::string s1, std::string s2, std::string s3);
+std::string rebuildExprString(CallExpr* cExpr);
+std::string rebuildExprStringHelper(Expr* expr);
 
 std::set<Flag>* buildVarDeclFlags(Flag flag1 = FLAG_UNKNOWN,
                                   Flag flag2 = FLAG_UNKNOWN);

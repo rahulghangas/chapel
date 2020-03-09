@@ -1264,8 +1264,6 @@ buildReduceScanPreface1(FnSymbol* fn, Symbol* data, Symbol* eltType,
   adjustMinMaxReduceOp(opExpr);
   eltType->addFlag(FLAG_MAYBE_TYPE);
   fn->insertAtTail(new DefExpr(eltType));
-  fn->insertAtTail(new DefExpr(data));
-  fn->insertAtTail("'move'(%S, %E)", data, dataExpr);
 
   if( !zippered ) {
     fn->insertAtTail("{TYPE 'move'(%S, 'typeof'(chpl__initCopy(iteratorIndex(_getIterator(%S)))))}", eltType, data);
@@ -1293,8 +1291,85 @@ buildReduceScanPreface2(FnSymbol* fn, Symbol* eltType, Symbol* globalOp,
   buildReduceScanPreface2(fn->body, eltType, globalOp, opExpr);
 }
 
+static void
+buildGpuReduceScanPreface1(FnSymbol* fn, Symbol* data, Symbol* eltType,
+                       Expr* opExpr, Expr* dataExpr, bool zippered=false) {
+  adjustMinMaxReduceOp(opExpr);
+  eltType->addFlag(FLAG_MAYBE_TYPE);
+  fn->insertAtTail(new DefExpr(eltType));
+  fn->insertAtTail(new DefExpr(data));
+  fn->insertAtTail("'move'(%S, %E)", data, dataExpr);
+
+  if( !zippered ) {
+    fn->insertAtTail("{TYPE 'move'(%S, 'typeof'(chpl__initCopy(iteratorIndex(_getIterator(%S)))))}", eltType, data);
+  } else {
+    fn->insertAtTail("{TYPE 'move'(%S, 'typeof'(chpl__initCopy(iteratorIndex(_getIteratorZip(%S)))))}", eltType, data);
+  }
+}
+
+const char *tmp = "+-*";
+const std::set<char> opSet(tmp,tmp+strlen(tmp));
+
+std::string specialStringConcat(std::string s1, std::string s2, std::string s3){
+  if (s1.empty() || s3.empty()){
+    return "";
+  }else{
+    return s1 + s2 + s3;
+  }
+}
+
+std::string rebuildExprString(CallExpr* cExpr){
+  if (UnresolvedSymExpr* sexp = toUnresolvedSymExpr(cExpr->baseExpr)){
+    if (opSet.find((sexp->unresolved)[0]) != opSet.end() && cExpr->argList.length==2){
+      return rebuildExprStringHelper(cExpr->argList.get(1)) +
+             std::string(sexp->unresolved) +
+             rebuildExprStringHelper(cExpr->argList.get(2));
+    }else{
+      return "";
+    }
+  }else{
+    return "";
+  }
+}
+
+std::string rebuildExprStringHelper(Expr* expr){
+  if (CallExpr* cexp2 = toCallExpr(expr)){
+    return rebuildExprString(cexp2);
+  }else if (UnresolvedSymExpr* sexp = toUnresolvedSymExpr(expr)){
+    return std::string(sexp->unresolved);
+  }else if (SymExpr* sexp2 = toSymExpr(expr)){
+    return std::to_string(toVarSymbol(sexp2->symbol())->immediate->int_value());
+  }else{
+    return "";
+  }
+}
+
+static
+CallExpr* buildGpuReduceExpr(VarSymbol* eltType, Expr* opExpr, Expr* dataExpr){
+  static int fn_num = 1;
+  FnSymbol* fn = new FnSymbol(astr("gpu_reduce", istr(fn_num++)));
+  fn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
+  fn->addFlag(FLAG_INLINE);
+
+  // VarSymbol* array = newTemp("_array");
+  // fn->insertAtTail(new DefExpr(array));  
+
+  VarSymbol* result = newTemp("_gpu_result");
+  fn->insertAtTail(new DefExpr(result));
+
+  const char* data_name = (toUnresolvedSymExpr(dataExpr))->unresolved;
+  // if (UnresolvedSymExpr* sExpr = toUnresolvedSymExpr(dataExpr)){
+
+  // }
+
+  fn->insertAtTail("'return'(%S)", result);
+
+  return new CallExpr(new DefExpr(fn));
+}
+
 CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
 // vass todo: since this holds, no need to pass zippered to PRIM_REDUCE below.
+  std::cout << "Went in" << std::endl;
   INT_ASSERT(zippered == (isCallExpr(dataExpr) &&
                           toCallExpr(dataExpr)->isPrimitive(PRIM_ZIP)));
   static int fn_num = 1;
@@ -1303,11 +1378,14 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   fn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
   fn->addFlag(FLAG_INLINE);
 
-  VarSymbol* data = newTemp("_reducedata");
+  VarSymbol* data = newTemp();
   VarSymbol* eltType = newTemp();
 
-  buildReduceScanPreface1(fn, data, eltType, opExpr, dataExpr, zippered);
-  CallExpr * gpu_reduce = buildGpuReduceExpr(fn, data, eltType, opExpr, dataExpr);
+  buildGpuReduceScanPreface1(fn, data, eltType, opExpr, dataExpr, zippered);
+  // fn->insertAtTail("'delete'(%S)", data);
+
+  std::cout << "GPU expr bog" << std::endl;
+  CallExpr * gpu_reduce = buildGpuReduceExpr(eltType, opExpr, dataExpr);
 
   VarSymbol* is_gpu = newTemp("_is_gpu");
   fn->insertAtTail(new DefExpr(is_gpu));
@@ -1317,29 +1395,23 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   VarSymbol* resultcpu = new VarSymbol("_resultcpu");
   VarSymbol* resultgpu = new VarSymbol("_resultgpu");
   BlockStmt* thenBlock = buildChapelStmt();
+
   thenBlock->insertAtTail(new DefExpr(resultgpu, gpu_reduce));
   thenBlock->insertAtTail("'return'(%S)", resultgpu);
+
   BlockStmt* elseBlock = buildChapelStmt();
-  elseBlock->insertAtTail(new CallExpr(PRIM_REDUCE, opExpr, dataExpr,
+  elseBlock->insertAtTail(new CallExpr(PRIM_REDUCE, opExpr, dataExpr->copy(),
                       zippered ? gTrue : gFalse));
+
   fn->insertAtTail(new CondStmt(new SymExpr(is_gpu),
                                 thenBlock, elseBlock));
 
+  std::cout << "Got through" << std::endl;
+  if (CallExpr* cexp = toCallExpr(dataExpr)){
+    std::cout << rebuildExprString(cexp) << std::endl;
+  }
+
   return new CallExpr(new DefExpr(fn));
-}
-
-static
-CallExpr* buildGpuReduceExpr(FnSymbol* fn, VarSymbol* data, VarSymbol* eltType, Expr* opExpr, Expr* dataExpr){
-  static int fn_num = 1;
-  FnSymbol* fn = new FnSymbol(astr("gpu_reduce", istr(fn_num++)));
-  fn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
-  fn->addFlag(FLAG_INLINE);
-
-  VarSymbol* array = newTemp("array");
-  fn->insertAtTail(new DefExpr(array));
-
-  
-
 }
 
 
