@@ -1357,10 +1357,32 @@ CallExpr* buildGpuReduceExpr(VarSymbol* eltType, Expr* opExpr, Expr* dataExpr){
   VarSymbol* result = newTemp("_gpu_result");
   fn->insertAtTail(new DefExpr(result));
 
-  const char* data_name = (toUnresolvedSymExpr(dataExpr))->unresolved;
-  // if (UnresolvedSymExpr* sExpr = toUnresolvedSymExpr(dataExpr)){
+  const char* op_name = (toUnresolvedSymExpr(opExpr))->unresolved;
+  if (UnresolvedSymExpr* sExpr = toUnresolvedSymExpr(dataExpr)){
+    const char* data_name = sExpr->unresolved;
 
-  // }
+    VarSymbol* array = newTemp("_array");
+    fn->body->insertAtTail(new DefExpr(array));
+
+    CallExpr* make_cptr = new CallExpr("c_ptrTo",
+                                     new UnresolvedSymExpr(data_name));
+    fn->body->insertAtTail("'move'(%S, %E)", array, make_cptr);
+
+    Expr* length = new_Expr(".(%E, 'size')",
+                                new UnresolvedSymExpr(data_name));
+    fn->body->insertAtTail("'move'(%S, 'gpu_reduce'(%S, %S, %S, %E ))",
+                              result,
+                              eltType,
+                              new_CStringSymbol(op_name),
+                              array,
+                              length);
+  
+  } else if (CallExpr* cExpr = toCallExpr(dataExpr)){
+    std::string foo = rebuildExprString(cExpr);
+    fn->body->insertAtTail("'move'(%S, '1')", result);
+  } else{
+    fn->body->insertAtTail("'move'(%S, '2')", result);
+  }
 
   fn->insertAtTail("'return'(%S)", result);
 
@@ -1400,17 +1422,17 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   thenBlock->insertAtTail("'return'(%S)", resultgpu);
 
   BlockStmt* elseBlock = buildChapelStmt();
-  elseBlock->insertAtTail(new CallExpr(PRIM_REDUCE, opExpr, dataExpr->copy(),
+  elseBlock->insertAtTail("'return'(%E)", new CallExpr(PRIM_REDUCE, opExpr, dataExpr->copy(),
                       zippered ? gTrue : gFalse));
 
   fn->insertAtTail(new CondStmt(new SymExpr(is_gpu),
                                 thenBlock, elseBlock));
 
-  std::cout << "Got through" << std::endl;
   if (CallExpr* cexp = toCallExpr(dataExpr)){
     std::cout << rebuildExprString(cexp) << std::endl;
   }
 
+  std::cout << "Got through" << std::endl;
   return new CallExpr(new DefExpr(fn));
 }
 

@@ -56,6 +56,8 @@
 #include <ostream>
 #include <stack>
 
+#include <iostream>
+
 class FnSymbol;
 
 // some prototypes
@@ -5418,6 +5420,7 @@ GenRet CallExpr::codegenPrimitive() {
     codegenFn(this, ret);
   } else {
     // otherwise, error
+    std :: cout << "Primitive is: " << tag << std::endl;
     INT_FATAL(this, "primitive codegen fail; should it still be in the AST?");
 
     if (gGenInfo->cfile) {
