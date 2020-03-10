@@ -1370,7 +1370,7 @@ CallExpr* buildGpuReduceExpr(VarSymbol* eltType, Expr* opExpr, Expr* dataExpr){
 
     Expr* length = new_Expr(".(%E, 'size')",
                                 new UnresolvedSymExpr(data_name));
-    fn->body->insertAtTail("'move'(%S, 'gpu_reduce'(%S, %S, %S, %E ))",
+    fn->body->insertAtTail("'move'(%S, 'chpl_gpu_reduce'(%S, %S, %S, %E ))",
                               result,
                               eltType,
                               new_CStringSymbol(op_name),

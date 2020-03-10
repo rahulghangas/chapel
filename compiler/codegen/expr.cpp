@@ -5276,6 +5276,18 @@ DEFINE_PRIM(PRIM_LOOKUP_FILENAME) {
     ret = call->codegenBasicPrimitiveExpr();
 }
 
+DEFINE_PRIM(PRIM_IS_GPU){
+    ret = codegenCallExpr("chpl_is_gpu", call->get(1), call->get(2));
+}
+
+DEFINE_PRIM(PRIM_GPU_REDUCE){
+    std::vector<GenRet> args;
+    for (int i = 0; i < call->argList.length; i++){
+      args.push_back(call->argList.get(i+1));
+    }
+    ret = codegenCallExpr("chpl_gpu_reduce", args);
+}
+
 DEFINE_PRIM(PRIM_INVARIANT_START) {
 
   GenInfo* info = gGenInfo;
