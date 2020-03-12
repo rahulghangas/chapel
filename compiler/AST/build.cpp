@@ -1307,7 +1307,7 @@ buildGpuReduceScanPreface1(FnSymbol* fn, Symbol* data, Symbol* eltType,
   }
 }
 
-const char *tmp = "+-*";
+const char *tmp = "+*";
 const std::set<char> opSet(tmp,tmp+strlen(tmp));
 
 std::string specialStringConcat(std::string s1, std::string s2, std::string s3){
@@ -1391,7 +1391,6 @@ CallExpr* buildGpuReduceExpr(VarSymbol* eltType, Expr* opExpr, Expr* dataExpr){
 
 CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
 // vass todo: since this holds, no need to pass zippered to PRIM_REDUCE below.
-  std::cout << "Went in" << std::endl;
   INT_ASSERT(zippered == (isCallExpr(dataExpr) &&
                           toCallExpr(dataExpr)->isPrimitive(PRIM_ZIP)));
   static int fn_num = 1;
@@ -1406,7 +1405,6 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   buildGpuReduceScanPreface1(fn, data, eltType, opExpr, dataExpr, zippered);
   // fn->insertAtTail("'delete'(%S)", data);
 
-  std::cout << "GPU expr bog" << std::endl;
   CallExpr * gpu_reduce = buildGpuReduceExpr(eltType, opExpr, dataExpr);
 
   VarSymbol* is_gpu = newTemp("_is_gpu");
@@ -1428,11 +1426,9 @@ CallExpr* buildReduceExpr(Expr* opExpr, Expr* dataExpr, bool zippered) {
   fn->insertAtTail(new CondStmt(new SymExpr(is_gpu),
                                 thenBlock, elseBlock));
 
-  if (CallExpr* cexp = toCallExpr(dataExpr)){
-    std::cout << rebuildExprString(cexp) << std::endl;
-  }
-
-  std::cout << "Got through" << std::endl;
+  // if (CallExpr* cexp = toCallExpr(dataExpr)){
+  //   std::cout << rebuildExprString(cexp) << std::endl;
+  // }
   return new CallExpr(new DefExpr(fn));
 }
 

@@ -788,8 +788,9 @@ llvm::LoadInst* codegenLoadLLVM(GenRet ptr,
 static
 GenRet codegenIsGPUSublocale(void)
 {
-  GenRet ret =  codegenCallExpr("chpl_gen_isGPUSublocale");
-  ret.chplType = dtBool;
+  GenRet ret(0);
+  // codegenCallExpr("chpl_gen_isGPUSublocale");
+  // ret.chplType = dtBool;
 #ifdef HAVE_LLVM
   GenInfo* info = gGenInfo;
   if (!info->cfile ) {
@@ -5276,17 +5277,13 @@ DEFINE_PRIM(PRIM_LOOKUP_FILENAME) {
     ret = call->codegenBasicPrimitiveExpr();
 }
 
-DEFINE_PRIM(PRIM_IS_GPU){
-    ret = codegenCallExpr("chpl_is_gpu", call->get(1), call->get(2));
-}
+// DEFINE_PRIM(PRIM_IS_GPU){
+//     ret = codegenIsGPUSublocale();
+// }
 
-DEFINE_PRIM(PRIM_GPU_REDUCE){
-    std::vector<GenRet> args;
-    for (int i = 0; i < call->argList.length; i++){
-      args.push_back(call->argList.get(i+1));
-    }
-    ret = codegenCallExpr("chpl_gpu_reduce", args);
-}
+// DEFINE_PRIM(PRIM_GPU_REDUCE){
+    
+// }
 
 DEFINE_PRIM(PRIM_INVARIANT_START) {
 
@@ -5430,6 +5427,31 @@ GenRet CallExpr::codegenPrimitive() {
   } else if (codegenFn != NULL) {
     // use a registered DEFINE_PRIM function from above
     codegenFn(this, ret);
+  } else if (tag == PRIM_IS_GPU){
+    ret = codegenIsGPUSublocale();
+  } else if (tag == PRIM_GPU_REDUCE ){
+    Type *data_type = this->get(1)->typeInfo();
+      /*FIXME: After gpu kernels for all possible reductions have
+      * been implemented, remove this conditional.
+      */
+    if (is_int_type(data_type)) {
+      ret = GenRet(1);
+      // std::string reduce_fn = "gpu_reduce_int" +
+      //   numToString(get_width(data_type));
+      // SymExpr* actual = toSymExpr(this->get(2));
+      // VarSymbol* var_op = toVarSymbol(actual->symbol());
+      // VarSymbol* var_src = toVarSymbol(toSymExpr(this->get(3))->symbol());
+      // VarSymbol* var_len = toVarSymbol(toSymExpr(this->get(4))->symbol());
+      // INT_ASSERT(var_op != NULL);
+      // INT_ASSERT(var_src != NULL);
+      // ret = codegenCallExpr(reduce_fn.c_str(),
+      //                           var_op,
+      //                           var_src,
+      //                           var_len);
+    } else {
+      INT_FATAL(data_type, "gpu reduction not implemented for given "
+                          "element type");
+    }
   } else {
     // otherwise, error
     std :: cout << "Primitive is: " << tag << std::endl;
@@ -5485,35 +5507,7 @@ GenRet CallExpr::codegenPrimMove() {
         codegenStoreLLVM(specRet, get(1));
 #endif
       }
-    }else if (rhsCe->isPrimitive(PRIM_IS_GPU)){
-      std::cout << "Checking GPU" << std::endl;
-      codegenAssign(get(1), codegenIsGPUSublocale());
-    }else if (rhsCe->isPrimitive(PRIM_GPU_REDUCE)){
-      std::cout << "Calling OpenCL/CUDA" << std::endl;
-      Type *data_type = this->get(1)->typeInfo();
-      /*FIXME: After gpu kernels for all possible reductions have
-      * been implemented, remove this conditional.
-      */
-      if (is_int_type(data_type)) {
-        std::string reduce_fn = "gpu_reduce_int" +
-          numToString(get_width(data_type));
-        SymExpr* actual = toSymExpr(this->get(2));
-        VarSymbol* var_op = toVarSymbol(actual->symbol());
-        VarSymbol* var_src = toVarSymbol(toSymExpr(this->get(3))->symbol());
-        VarSymbol* var_len = toVarSymbol(toSymExpr(this->get(4))->symbol());
-        INT_ASSERT(var_op != NULL);
-        INT_ASSERT(var_src != NULL);
-        GenRet r = codegenCallExpr(reduce_fn.c_str(),
-                                  var_op,
-                                  var_src,
-                                  var_len);
-        codegenAssign(get(1), r);
-      } else {
-        INT_FATAL(data_type, "gpu reduction not implemented for given "
-                            "element type");
-      }
-    }
-    else {
+    } else {
       codegenAssign(get(1), specRet);
     }
 
