@@ -990,7 +990,8 @@ module Random {
         return _choice(this, arr, size=size, replace=replace, prob=prob);
       }
 
-      proc inplace(tmp: [?D], s: int, n1: int, n2: int, seed: int) {
+      pragma "no doc"
+      proc _inplace(tmp: [?D], s: int, n1: int, n2: int, seed: int) {
 
         var i = s, j = s + n1, n = s + n1 + n2;
 
@@ -1023,7 +1024,8 @@ module Random {
        }
      }
 
-     proc mergeShuffle(tmp: [?D], l : int, r: int, seed : int) {
+     pragma "no doc"
+     proc _mergeShuffle(tmp: [?D], l : int, r: int, seed : int) {
 
        if l >= r then
        return;
@@ -1031,13 +1033,13 @@ module Random {
        var mid = (l+r)/2;
        sync {
          begin {
-           mergeShuffle(tmp, l, mid, seed);
+           _mergeShuffle(tmp, l, mid, seed);
          }
          begin {
-           mergeShuffle(tmp, mid+1, r, seed);
+           _mergeShuffle(tmp, mid+1, r, seed);
          }
        }
-       inplace(tmp, l, mid-l+1, r-mid, seed);
+       _inplace(tmp, l, mid-l+1, r-mid, seed);
      }
 
       /* Randomly shuffle a 1-D array. */
@@ -1051,7 +1053,7 @@ module Random {
         _lock();
 
         // Merge shuffle
-        mergeShuffle(tmp, 1, tmp.size, seed);
+        _mergeShuffle(tmp, 1, tmp.size, seed);
 
         var j = 1;
         for i in D {
