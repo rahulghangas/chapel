@@ -24,6 +24,7 @@
 #include "ForLoop.h"
 #include "passes.h"
 #include "stringutil.h"
+#include "AstDump.h"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -573,17 +574,86 @@ ForallStmt* ForallStmt::buildHelper(Expr* indices, Expr* iterator,
 BlockStmt* ForallStmt::build(Expr* indices, Expr* iterator, CallExpr* intents,
                              BlockStmt* body, bool zippered, bool serialOK)
 {
+  // #include <iostream>
+  // if (zippered) {
+  //   CallExpr* zip;
+  //   if ((zip = toCallExpr(iterator))){
+  //     for (int i = 1; i <= zip->argList.length; i++){
+        
+  //       UnresolvedSymExpr* sExpr;
+  //       CallExpr* cExpr;
+  //       if ((sExpr = toUnresolvedSymExpr(zip->argList.get(i)))) {
+  //       std::cout << sExpr->unresolved << ", ";
+  //       } else if((cExpr = toCallExpr(zip->argList.get(i)))){
+  //         std::cout << toUnresolvedSymExpr(cExpr->baseExpr)->unresolved << ", ";
+  //       }
+        
+  //     }
+  //     std::cout << std::endl;
+  //   }
+  // }
+
   checkControlFlow(body, "forall statement");
 
   if (!indices)
     indices = new UnresolvedSymExpr("chpl__elidedIdx");
   checkIndices(indices);
 
+  // BlockStmt* gpuStmt = buildGpuForallStmt(indices, iterator, intents, body, zippered);
+
   ForallStmt* fs = ForallStmt::buildHelper(indices, iterator, intents, body,
                                            zippered, false);
   fs->fAllowSerialIterator = serialOK;
 
+  std::cout << "another forall loop" << std::endl;
+  std::cout << "induction Variables" << std::endl;
+  for (int i=1; i<= fs->inductionVariables().length; i++){
+    std::cout << toDefExpr(fs->inductionVariables().get(i))->sym->name << ", ";
+  }
+  std::cout << std::endl;
+  std::cout << "Iterated Expressions" << std::endl;
+  for (int i=1; i<= fs->iteratedExpressions().length; i++){
+    if (UnresolvedSymExpr* s = toUnresolvedSymExpr(fs->iteratedExpressions().get(i)))
+    std::cout << s->unresolved << ", ";
+  }
+  std::cout << std::endl <<std::endl;
+
   return buildChapelStmt(fs);
+}
+
+BlockStmt* buildGpuForallStmt(Expr* indices, Expr* iterator, CallExpr* intents, BlockStmt* body, bool zippered){
+  BlockStmt* gpuStmt = new BlockStmt();
+  std::map<char*, UnresolvedSymExpr*> indicesNames;
+  bool tupledIndices = false;
+
+  if (intents) {
+    gpuStmt->insertAtTail(new CallExpr(PRIM_ERROR));
+    return gpuStmt;
+  }
+
+  if (CallExpr* call = toCallExpr(iterator)){
+    if (!call->isPrimitive(PRIM_ZIP)) {
+      gpuStmt->insertAtTail(new CallExpr(PRIM_ERROR));
+      return gpuStmt;
+    }
+  }
+
+  if (zippered) {
+    if(CallExpr* call = toCallExpr(indices)){
+      if (call->argList.length != 1 || call->argList.length <= toCallExpr(iterator)->argList.length){
+        gpuStmt->insertAtTail(new CallExpr(PRIM_ERROR));
+        return gpuStmt;
+      }
+    }
+  }
+
+
+
+
+  
+
+  return NULL;
+
 }
 
 /////////////////////////////////////////////////////////////////////////////

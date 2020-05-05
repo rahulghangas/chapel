@@ -42,6 +42,8 @@
 #include <map>
 #include <utility>
 
+#include <iostream>
+
 static BlockStmt* findStmtWithTag(PrimitiveTag tag, BlockStmt* blockStmt);
 
 void checkControlFlow(Expr* expr, const char* context) {
@@ -898,6 +900,16 @@ checkIndices(BaseAST* indices) {
   if (CallExpr* call = toCallExpr(indices)) {
     if (!call->isNamed("_build_tuple"))
       USR_FATAL(indices, "invalid index expression");
+    // else {
+    //   std::cout << "Build tuple is true for ";
+    //   for (int i=1; i<=call->argList.length; i++){
+    //     UnresolvedSymExpr* s;
+    //     if ((s = toUnresolvedSymExpr(call->argList.get(i)))){
+    //       std::cout << s->unresolved << ", ";
+    //     }
+    //   }
+    //   std::cout << std::endl;
+    // }
     for_actuals(actual, call)
       checkIndices(actual);
   } else if (!isSymExpr(indices) && !isUnresolvedSymExpr(indices))
@@ -988,8 +1000,38 @@ buildForLoopExpr(Expr* indices, Expr* iteratorExpr, Expr* expr, Expr* cond, bool
 
 Expr*
 buildForallLoopExpr(Expr* indices, Expr* iteratorExpr, Expr* expr, Expr* cond, bool maybeArrayType, bool zippered) {
-  if (zippered) zipToTuple(iteratorExpr);
+  // VarSymbol* isGpu = newTemp("_is_gpu");
+  // fn->insertAtTail(new DefExpr(is_gpu));
+  // fn->insertAtTail(new CallExpr(PRIM_MOVE, is_gpu,
+  //                               new CallExpr(PRIM_IS_GPU)));
+  
+  // BlockStmt* cpuBlock = new BlockStmt();
+  // BlockStmt* gpuBlock = new BlockStmt();
+
+  // gpuBlock->insertAtTail("'return'(%E)", buildGpuLoopExpr(indices, iteratorExpr, expr, cond, maybeArrayType, zippered));
+  if (zippered) {
+    std::cout << "Zippered True" << std::endl;
+    zipToTuple(iteratorExpr);
+  }
+
+  // UnresolvedSymExpr* foo;
+  // if ((foo = toUnresolvedSymExpr(iteratorExpr)) != NULL){
+  //   std::cout << foo->unresolved << std::endl;
+  // }
+  
+  
+  // cpuBlock->insertAtTail("'return'(%E)", new LoopExpr(indices, iteratorExpr, cond, expr, /*forall=*/ true, zippered, maybeArrayType));
   return new LoopExpr(indices, iteratorExpr, cond, expr, /*forall=*/ true, zippered, maybeArrayType);
+  // return new CondExpr(newSymExpr(isGpu), gpuBlock, cpuBlock);
+}
+
+Expr*
+buildGpuLoopExpr(Expr* indices, Expr* iteratorExpr, Expr* expr, Expr* cond, bool maybeArrayType, bool zippered){
+  if (maybeArrayType) INT_FATAL("Array shorthand not supported yet");
+  if (cond != NULL) INT_FATAL("Filtering condition not supported yet");
+  if (zippered) INT_FATAL("Zippered Expression not supported yet");
+
+  return NULL;
 }
 
 //
