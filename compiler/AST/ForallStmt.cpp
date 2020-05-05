@@ -610,12 +610,21 @@ BlockStmt* ForallStmt::build(Expr* indices, Expr* iterator, CallExpr* intents,
   for (int i=1; i<= fs->inductionVariables().length; i++){
     std::cout << toDefExpr(fs->inductionVariables().get(i))->sym->name << ", ";
   }
+
+  std::cout << std::endl;
+    std::cout << "Iterated Expressions" << std::endl;
+    for (int i=1; i<= fs->iteratedExpressions().length; i++){
+      if (UnresolvedSymExpr* s = toUnresolvedSymExpr(fs->iteratedExpressions().get(i)))
+      std::cout << s->unresolved << ", ";
+    }
+
   std::cout << std::endl;
   std::cout << "Iterated Expressions" << std::endl;
   for (int i=1; i<= fs->iteratedExpressions().length; i++){
     if (UnresolvedSymExpr* s = toUnresolvedSymExpr(fs->iteratedExpressions().get(i)))
     std::cout << s->unresolved << ", ";
   }
+
   std::cout << std::endl <<std::endl;
 
   return buildChapelStmt(fs);
