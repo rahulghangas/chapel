@@ -993,7 +993,7 @@ module Random {
       pragma "no doc"
       inline proc _fisherYatesShuffle(arr : [] eltType, start : int, blockSize : int) {
         var PCGRandomStreamPrivate_rngs: numGenerators(eltType) * pcg_setseq_64_xsh_rr_32_rng;
-        var PCGRandomStreamPrivate_count: int(64) = 1;
+        var PCGRandomStreamPrivate_count: int(64) = this.PCGRandomStreamPrivate_count;
         for i in start+1..#blockSize-1 {
           var k = randlc_bounded(arr.domain.idxType,
                                  PCGRandomStreamPrivate_rngs,
@@ -1003,25 +1003,17 @@ module Random {
         }
       }
 
-      proc foo(size : int){
-        forall x in 1..size{
-          var k = randlc_bounded(idxType,
-                                 PCGRandomStreamPrivate_rngs,
-                                 seed, PCGRandomStreamPrivate_count,
-                                 0, x);
-        }
-      }
-
       pragma "no doc"
       inline proc _mergeShuffleMerge(arr : [] eltType, start : int, lArraySize : int, totalSize : int) {
         var PCGRandomStreamPrivate_rngs: numGenerators(eltType) * pcg_setseq_64_xsh_rr_32_rng;
-        var PCGRandomStreamPrivate_count: int(64) = 1;
+        var PCGRandomStreamPrivate_count: int(64) = this.PCGRandomStreamPrivate_count;
         var i = start;
         var j = start + lArraySize;
         var n = start + totalSize;
 
+        var k : array.domain.idxType;
         while true {
-          var k = randlc_bounded(arr.domain.idxType,
+          k = randlc_bounded(j.type,
                                  PCGRandomStreamPrivate_rngs,
                                  seed, PCGRandomStreamPrivate_count,
                                  0, 1);
@@ -1036,7 +1028,7 @@ module Random {
         }
 
         while i < n {
-          var k = randlc_bounded(arr.domain.idxType,
+          k = randlc_bounded(arr.domain.idxType,
                                  PCGRandomStreamPrivate_rngs,
                                  seed, PCGRandomStreamPrivate_count,
                                  start, i);
@@ -1082,7 +1074,7 @@ module Random {
           }
         }
 
-        PCGRandomStreamPrivate_count += arraySize;
+        PCGRandomStreamPrivate_count += 2*arraySize;
         _unlock();
       }
 
@@ -1101,8 +1093,9 @@ module Random {
 
         _lock();
 
+        var j : array.domain.idxType;
         for i in low..high {
-          var j = randlc_bounded(arr.domain.idxType,
+          j = randlc_bounded(arr.domain.idxType,
                                  PCGRandomStreamPrivate_rngs,
                                  seed, PCGRandomStreamPrivate_count,
                                  low, i);
