@@ -571,98 +571,108 @@ ForallStmt* ForallStmt::buildHelper(Expr* indices, Expr* iterator,
   return fs;
 }
 
+static
+BlockStmt* buildGpuForallStmt(ForallStmt* fsGpu);
+
 BlockStmt* ForallStmt::build(Expr* indices, Expr* iterator, CallExpr* intents,
                              BlockStmt* body, bool zippered, bool serialOK)
 {
-  // #include <iostream>
-  // if (zippered) {
-  //   CallExpr* zip;
-  //   if ((zip = toCallExpr(iterator))){
-  //     for (int i = 1; i <= zip->argList.length; i++){
-        
-  //       UnresolvedSymExpr* sExpr;
-  //       CallExpr* cExpr;
-  //       if ((sExpr = toUnresolvedSymExpr(zip->argList.get(i)))) {
-  //       std::cout << sExpr->unresolved << ", ";
-  //       } else if((cExpr = toCallExpr(zip->argList.get(i)))){
-  //         std::cout << toUnresolvedSymExpr(cExpr->baseExpr)->unresolved << ", ";
-  //       }
-        
-  //     }
-  //     std::cout << std::endl;
-  //   }
-  // }
-
   checkControlFlow(body, "forall statement");
 
   if (!indices)
     indices = new UnresolvedSymExpr("chpl__elidedIdx");
   checkIndices(indices);
 
-  // BlockStmt* gpuStmt = buildGpuForallStmt(indices, iterator, intents, body, zippered);
 
   ForallStmt* fs = ForallStmt::buildHelper(indices, iterator, intents, body,
                                            zippered, false);
   fs->fAllowSerialIterator = serialOK;
+  
+  // std::cout << "another forall loop" << std::endl;
+  // std::cout << "induction Variables" << std::endl;
+  // for (int i=1; i<= fs->inductionVariables().length; i++){
+  //   std::cout << toDefExpr(fs->inductionVariables().get(i))->sym->name << ", ";
+  // }
 
-  std::cout << "another forall loop" << std::endl;
-  std::cout << "induction Variables" << std::endl;
-  for (int i=1; i<= fs->inductionVariables().length; i++){
-    std::cout << toDefExpr(fs->inductionVariables().get(i))->sym->name << ", ";
-  }
+  // std::cout << std::endl;
+  // std::cout << "Iterated Expressions" << std::endl;
+  // for (int i=1; i<= fs->iteratedExpressions().length; i++){
+  //   if (UnresolvedSymExpr* s = toUnresolvedSymExpr(fs->iteratedExpressions().get(i)))
+  //   std::cout << s->unresolved << ", ";
+  // }
 
-  std::cout << std::endl;
-    std::cout << "Iterated Expressions" << std::endl;
-    for (int i=1; i<= fs->iteratedExpressions().length; i++){
-      if (UnresolvedSymExpr* s = toUnresolvedSymExpr(fs->iteratedExpressions().get(i)))
-      std::cout << s->unresolved << ", ";
-    }
+  // std::cout << std::endl <<std::endl;
 
-  std::cout << std::endl;
-  std::cout << "Iterated Expressions" << std::endl;
-  for (int i=1; i<= fs->iteratedExpressions().length; i++){
-    if (UnresolvedSymExpr* s = toUnresolvedSymExpr(fs->iteratedExpressions().get(i)))
-    std::cout << s->unresolved << ", ";
-  }
+  BlockStmt* conditional = new BlockStmt();
 
-  std::cout << std::endl <<std::endl;
+  VarSymbol* is_gpu = newTemp("_is_gpu");
+  conditional->insertAtTail(new DefExpr(is_gpu));
+  conditional->insertAtTail(new CallExpr(PRIM_MOVE, is_gpu,
+                                new CallExpr(PRIM_IS_GPU)));
 
-  return buildChapelStmt(fs);
+
+  BlockStmt* cpuStmt = buildChapelStmt(fs);
+  // BlockStmt* gpuStmt = buildChapelStmt();
+  BlockStmt* gpuStmt = buildGpuForallStmt(fs);
+  conditional->insertAtTail(new CondStmt(new SymExpr(is_gpu), gpuStmt, cpuStmt));
+
+  return conditional;
 }
 
-BlockStmt* buildGpuForallStmt(Expr* indices, Expr* iterator, CallExpr* intents, BlockStmt* body, bool zippered){
-  BlockStmt* gpuStmt = new BlockStmt();
-  std::map<char*, UnresolvedSymExpr*> indicesNames;
-  bool tupledIndices = false;
+static
+BlockStmt* buildGpuForallStmt(ForallStmt* fsGpu)
+{
+  static int kernelNum = 1;
+  BlockStmt* gpuStmt = new BlockStmt(BLOCK_NORMAL);
+  BlockStmt* innerStmt = buildChapelStmt();
 
-  if (intents) {
-    gpuStmt->insertAtTail(new CallExpr(PRIM_ERROR));
-    return gpuStmt;
-  }
+  FnSymbol* kernelFn = new FnSymbol(astr("chpl_gpu_loop_kernel_", istr(kernelNum++)));
+  kernelFn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
+  kernelFn->addFlag(FLAG_DONT_DISABLE_REMOTE_VALUE_FORWARDING);
+  kernelFn->addFlag(FLAG_INLINE);
 
-  if (CallExpr* call = toCallExpr(iterator)){
-    if (!call->isPrimitive(PRIM_ZIP)) {
-      gpuStmt->insertAtTail(new CallExpr(PRIM_ERROR));
+  UnresolvedSymExpr* uSExpr;
+  for_alist(expr, fsGpu->iteratedExpressions()) {
+    uSExpr = toUnresolvedSymExpr(expr);
+    if (!uSExpr) {
+      gpuStmt->insertAtTail(new CallExpr(PRIM_INT_ERROR));
+      std::cout << "Got thru error" <<std::endl;
+      std::cout << std::endl <<std::endl;
       return gpuStmt;
     }
-  }
-
-  if (zippered) {
-    if(CallExpr* call = toCallExpr(indices)){
-      if (call->argList.length != 1 || call->argList.length <= toCallExpr(iterator)->argList.length){
-        gpuStmt->insertAtTail(new CallExpr(PRIM_ERROR));
-        return gpuStmt;
-      }
+    else {
+      VarSymbol* iteratedSymExpr = newTemp(toUnresolvedSymExpr(expr)->unresolved);
+      kernelFn->insertFormalAtTail(new DefExpr(iteratedSymExpr));
     }
   }
 
-
-
-
+  std::cout << "Got thru loop" <<std::endl;
+  std::cout << std::endl <<std::endl;
   
+  kernelFn->body = new BlockStmt();
+  kernelFn->replaceBodyStmtsWithStmts(fsGpu->loopBody());
 
-  return NULL;
+  // for(int i = 1; i <= kernelFn->body->length(); i++) {
+  //   std::cout << kernelFn->body->getFirstExpr() << std::endl;
+  // }
 
+  // VarSymbol* foo = newTemp("Foo");
+  // gpuStmt->insertAtTail(new DefExpr(foo));
+  // gpuStmt->insertAtTail("'move'(%S, %E)", foo, new SymExpr(new VarSymbol()));
+  // std::string kernel = "define void @gpu_kernel_";
+  // kernel.append(istr(kernelNum++));
+
+  // std::string parameters = "(";
+  // for_alist(expr, fsGpu->iteratedExpressions()) {
+    
+  // }
+  
+  VarSymbol* foo = newTemp("foo");
+  // gpuStmt->insertAtTail(new DefExpr(kernelFn));
+  BlockStmt* kernelBody = kernelFn->body->copy();
+  // gpuStmt->insertAtTail(new CallExpr(PRIM_GPU_LOOP, kernelBody));
+  
+  return gpuStmt;
 }
 
 /////////////////////////////////////////////////////////////////////////////

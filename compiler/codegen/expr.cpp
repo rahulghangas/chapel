@@ -5351,6 +5351,31 @@ DEFINE_PRIM(PRIM_OPTIMIZATION_INFO) {
   // No action required here
 }
 
+static
+GenRet codegenIsGPUSublocale(void)
+{
+  GenRet ret(0);
+  return ret;
+}
+
+DEFINE_PRIM(PRIM_IS_GPU) {
+  ret = codegenIsGPUSublocale();
+}
+
+DEFINE_PRIM(PRIM_GPU_LOOP) {
+  // ForallStmt* loop = toForallStmt(call->get(1));
+  // VarSymbol* kernelNum = toVarSymbol(toSymExpr(call->get(2)));
+
+  // // AList body = loop->loopBody()->body;
+  // std::cout << "Codegen" << std::endl;
+  // std::string kernel = "define void @gpu_kernel_" + std::to_string(kernelNum->immediate->int_value());
+  // std::cout << kernel << std::endl;
+  // // for (int i=1; i<body.length; i++) {
+
+  // // }
+  // ret = GenRet(0);
+}
+
 void CallExpr::registerPrimitivesForCodegen() {
   // The following macros call registerPrimitiveCodegen for
   // the DEFINE_PRIM routines above for each primitive labelled

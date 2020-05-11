@@ -309,6 +309,8 @@ void checkPrimitives()
      case PRIM_NUM_FIELDS:
      case PRIM_IS_POD:
      case PRIM_GATHER_TESTS:
+     case PRIM_IS_GPU:
+     case PRIM_GPU_LOOP:
       break;
     }
   }
