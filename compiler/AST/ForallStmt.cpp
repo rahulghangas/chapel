@@ -571,12 +571,10 @@ ForallStmt* ForallStmt::buildHelper(Expr* indices, Expr* iterator,
   return fs;
 }
 
-static
-BlockStmt* buildGpuForallStmt(ForallStmt* fsGpu);
-
 BlockStmt* ForallStmt::build(Expr* indices, Expr* iterator, CallExpr* intents,
                              BlockStmt* body, bool zippered, bool serialOK)
 {
+  static int kernelNum = 1;
   checkControlFlow(body, "forall statement");
 
   if (!indices)
@@ -603,74 +601,121 @@ BlockStmt* ForallStmt::build(Expr* indices, Expr* iterator, CallExpr* intents,
 
   // std::cout << std::endl <<std::endl;
 
-  BlockStmt* conditional = new BlockStmt();
-
-  VarSymbol* is_gpu = newTemp("_is_gpu");
-  conditional->insertAtTail(new DefExpr(is_gpu));
-  conditional->insertAtTail(new CallExpr(PRIM_MOVE, is_gpu,
-                                new CallExpr(PRIM_IS_GPU)));
-
-
   BlockStmt* cpuStmt = buildChapelStmt(fs);
   // BlockStmt* gpuStmt = buildChapelStmt();
-  BlockStmt* gpuStmt = buildGpuForallStmt(fs);
-  conditional->insertAtTail(new CondStmt(new SymExpr(is_gpu), gpuStmt, cpuStmt));
+  BlockStmt* gpuStmt = buildGpuForallStmt(fs, kernelNum++);
+
+  if (gpuStmt->body.empty()) {
+    return cpuStmt;
+  }
+
+  BlockStmt* conditional = new BlockStmt();
+
+  VarSymbol* isGpu = newTemp("chpl_is_gpu");
+  conditional->insertAtTail(new DefExpr(isGpu));
+  conditional->insertAtTail(new CallExpr(PRIM_MOVE, isGpu,
+                                new CallExpr(PRIM_IS_GPU)));
+
+  conditional->insertAtTail(new CondStmt(new SymExpr(isGpu), gpuStmt, cpuStmt));
 
   return conditional;
 }
 
-static
-BlockStmt* buildGpuForallStmt(ForallStmt* fsGpu)
-{
-  static int kernelNum = 1;
-  BlockStmt* gpuStmt = new BlockStmt(BLOCK_NORMAL);
-  BlockStmt* innerStmt = buildChapelStmt();
+bool checkIfGpuFalvouredExpr(Expr* expr) {
+  if (CallExpr* cExp = toCallExpr(expr)){
+    if (cExp->isNamed("=")){
+      std::cout << "Was call to primitive" << std::endl ;
+      if (toUnresolvedSymExpr(cExp->get(1)) && (toUnresolvedSymExpr(cExp->get(2)) || toSymExpr(cExp->get(2)))) {
+        return true;
+      }
+    }
+  } 
+  return false;
+}
 
-  FnSymbol* kernelFn = new FnSymbol(astr("chpl_gpu_loop_kernel_", istr(kernelNum++)));
-  kernelFn->addFlag(FLAG_COMPILER_NESTED_FUNCTION);
-  kernelFn->addFlag(FLAG_DONT_DISABLE_REMOTE_VALUE_FORWARDING);
+bool checkIfBodyGpuFlavouredBlock(FnSymbol* kernelFn, BlockStmt* body) {
+  
+  for_alist(expr, body->body) {
+    if (!checkIfGpuFalvouredExpr(expr)){
+      
+      return false;
+    }
+  }
+  std::cout << "Done true" << std::endl << std::endl;
+  return true;
+}
+
+BlockStmt* buildGpuForallStmt(ForallStmt* fsGpu, int kernelNum)
+{
+  BlockStmt* gpuStmt = new BlockStmt();
+  FnSymbol* kernelFn = new FnSymbol(astr("chpl_gpu_loop_kernel_", istr(kernelNum)));
+  kernelFn->retType = dtVoid;
   kernelFn->addFlag(FLAG_INLINE);
+  kernelFn->addFlag(FLAG_VOID_NO_RETURN_VALUE);
 
   UnresolvedSymExpr* uSExpr;
-  for_alist(expr, fsGpu->iteratedExpressions()) {
-    uSExpr = toUnresolvedSymExpr(expr);
+  for(int i=1; i<=fsGpu->iteratedExpressions().length; i++) {
+    uSExpr = toUnresolvedSymExpr(fsGpu->iteratedExpressions().get(i));
     if (!uSExpr) {
-      gpuStmt->insertAtTail(new CallExpr(PRIM_INT_ERROR));
-      std::cout << "Got thru error" <<std::endl;
-      std::cout << std::endl <<std::endl;
       return gpuStmt;
     }
     else {
-      VarSymbol* iteratedSymExpr = newTemp(toUnresolvedSymExpr(expr)->unresolved);
-      kernelFn->insertFormalAtTail(new DefExpr(iteratedSymExpr));
+      kernelFn->insertFormalAtTail(new ArgSymbol(INTENT_BLANK, toDefExpr(fsGpu->inductionVariables().get(i))->sym->name, dtAny));
     }
   }
 
-  std::cout << "Got thru loop" <<std::endl;
-  std::cout << std::endl <<std::endl;
-  
-  kernelFn->body = new BlockStmt();
-  kernelFn->replaceBodyStmtsWithStmts(fsGpu->loopBody());
+  if (checkIfBodyGpuFlavouredBlock(kernelFn, fsGpu->loopBody())) {
+    std::cout << "success in copying body" << std::endl;
+    kernelFn->body = fsGpu->loopBody()->copy();
+  }
 
-  // for(int i = 1; i <= kernelFn->body->length(); i++) {
-  //   std::cout << kernelFn->body->getFirstExpr() << std::endl;
-  // }
+  gpuStmt->insertAtTail(new DefExpr(kernelFn));
+  gpuKernelMap[kernelNum] = kernelFn;
 
-  // VarSymbol* foo = newTemp("Foo");
-  // gpuStmt->insertAtTail(new DefExpr(foo));
-  // gpuStmt->insertAtTail("'move'(%S, %E)", foo, new SymExpr(new VarSymbol()));
-  // std::string kernel = "define void @gpu_kernel_";
-  // kernel.append(istr(kernelNum++));
+  VarSymbol* kernelNumSym = new_IntSymbol(kernelNum, INT_SIZE_32);
+  kernelNumSym->name = astr("kernelIdx", istr(kernelNum));
 
-  // std::string parameters = "(";
-  // for_alist(expr, fsGpu->iteratedExpressions()) {
+//   std::cout << "Got thru loop" <<std::endl;
+
+// after:
+//   // for_alist(expr, fsGpu->loopBody()->body) {
+//   //   if(CallExpr* cExp = toCallExpr(expr)) {
+//   //     if (!cExp->isPrimitive(PRIM_MOVE)){
+//   //       gpuStmt->insertAtTail(new CallExpr(PRIM_INT_ERROR));
+//   //       return gpuStmt;
+//   //     }
+//   //   }
+//   // }
+
+//   // kernelFn->body = fsGpu->loopBody()->copy();
+//   kernelFn->retType = dtVoid;
+//   kernelFn->body = new BlockStmt();
+//   kernelFn->insertAtTail(new CallExpr(PRIM_RETURN, gVoid));
+
+//   // for(int i = 1; i <= kernelFn->body->length(); i++) {
+//   //   std::cout << kernelFn->body->getFirstExpr() << std::endl;
+//   // }
+
+//   // VarSymbol* foo = newTemp("Foo");
+//   // gpuStmt->insertAtTail(new DefExpr(foo));
+//   // gpuStmt->insertAtTail("'move'(%S, %E)", foo, new SymExpr(new VarSymbol()));
+//   // std::string kernel = "define void @gpu_kernel_";
+//   // kernel.append(istr(kernelNum++));
+
+//   // std::string parameters = "(";
+//   // for_alist(expr, fsGpu->iteratedExpressions()) {
     
-  // }
-  
-  VarSymbol* foo = newTemp("foo");
-  // gpuStmt->insertAtTail(new DefExpr(kernelFn));
-  BlockStmt* kernelBody = kernelFn->body->copy();
-  // gpuStmt->insertAtTail(new CallExpr(PRIM_GPU_LOOP, kernelBody));
+//   // }
+//   // gpuStmt->insertAtTail(new DefExpr(kernelFn));
+//   // , new SymExpr(kernelFn)
+
+//   DefExpr* fnDef = new DefExpr(kernelFn);
+//   rootModule->block->insertAtTail(fnDef);
+//   gpuStmt->insertAtTail(fnDef);
+
+
+
+  gpuStmt->insertAtTail(new CallExpr(PRIM_GPU_LOOP, kernelNumSym));
   
   return gpuStmt;
 }

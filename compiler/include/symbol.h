@@ -818,4 +818,7 @@ void completePrintLlvmIrStage(llvmStageNum_t numStage);
 const char* toString(ArgSymbol* arg);
 const char* toString(VarSymbol* var);
 
+extern std::map<int, FnSymbol*> gpuKernelMap;
+extern std::vector<FnSymbol*> gpuKernelVec;
+
 #endif

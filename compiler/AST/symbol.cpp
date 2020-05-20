@@ -79,6 +79,9 @@ VarSymbol *gInfinity = NULL;
 VarSymbol *gNan = NULL;
 VarSymbol *gUninstantiated = NULL;
 
+std::map<int, FnSymbol*> gpuKernelMap;
+std::vector<FnSymbol*> gpuKernelVec;
+
 void verifyInTree(BaseAST* ast, const char* msg) {
   if (ast != NULL && ast->inTree() == false) {
     INT_FATAL(ast, "%s is not in AST", msg);

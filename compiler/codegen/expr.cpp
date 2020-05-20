@@ -5359,6 +5359,8 @@ GenRet codegenIsGPUSublocale(void)
 }
 
 DEFINE_PRIM(PRIM_IS_GPU) {
+  AList& args = call->argList;
+  std::cout << "Num of args to IS_GPU: " << args.length << std::endl;
   ret = codegenIsGPUSublocale();
 }
 
@@ -5374,6 +5376,25 @@ DEFINE_PRIM(PRIM_GPU_LOOP) {
 
   // // }
   // ret = GenRet(0);
+  // Immediate* imm = toVarSymbol(call->get(1))->immediate;
+  // std::cout << kernelNum << std::endl;
+  AList& args = call->argList;
+  std::cout << "Num of args: " << args.length << std::endl;
+  SymExpr* sym = toSymExpr(call->get(1));
+
+  int kernelNum = toVarSymbol(sym->symbol())->immediate->int_value();
+  FnSymbol* fn = gpuKernelMap[kernelNum];
+  // SymExpr* kernelFnSymbolExpr = toSymExpr(call->get(2));
+
+  // if (kernelFnSymbolExpr) {
+  // }
+  std::cout << "GPU_LOOP_SUCCESS" << std::endl;
+  std::cout << sym->symbol()->name << std::endl;
+  if (fn){
+    std::cout << fn->name << std::endl;
+  }
+
+  std::cout << "GPU_LOOP_END" << std::endl;
 }
 
 void CallExpr::registerPrimitivesForCodegen() {

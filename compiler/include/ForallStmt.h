@@ -188,6 +188,8 @@ QualifiedType fsIterYieldType(Expr* ref, FnSymbol* iterFn);
 bool fsGotFollower(Expr* anchor, Symbol* followThis, Symbol* iterSym);
 void fsCheckNumIdxVarsVsIterables(ForallStmt* fs, int numIdx, int numIter);
 
+
+BlockStmt* buildGpuForallStmt(ForallStmt* fsGpu, int kernelNum);
 /// done ///
 
 #endif
