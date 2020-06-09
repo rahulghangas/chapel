@@ -1051,7 +1051,7 @@ module Random {
         }
         var numOfSplits : int = 1 << c;
 
-        forall i in 0..numOfSplits-1 {
+        forall i in 0..#numOfSplits {
           var start : int = arraySize * i >> c;
           var end : int = arraySize * (i+1) >> c;
           _fisherYatesShuffle(array, start, end-start);
@@ -1066,7 +1066,7 @@ module Random {
         }
 
         for mergeLevel in mergeLevels(numOfSplits) {
-          forall blockIdx in 0..numOfSplits-1 by 2*mergeLevel {
+          forall blockIdx in 0..#numOfSplits by 2*mergeLevel {
             var j = arraySize * blockIdx >> c;
             var k = arraySize * (blockIdx + mergeLevel) >> c;
             var l = arraySize * (blockIdx + 2*mergeLevel) >> c;
@@ -1074,7 +1074,7 @@ module Random {
           }
         }
 
-        PCGRandomStreamPrivate_count += 2*arraySize - numOfSplits;
+        PCGRandomStreamPrivate_count += arraySize * (numOfSplits + 1);
         _unlock();
       }
 
