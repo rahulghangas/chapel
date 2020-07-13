@@ -891,6 +891,10 @@ proc diag(A: [?Adom] ?eltType, k=0) {
   else compilerError("A must have rank 2 or less");
 }
 
+proc diag(A: [?Adom] ?eltType, k=0) where isDistributed(A) {
+  return 0;
+}
+
 private proc _diag_vec(A:[?Adom] ?eltType) {
   const (m, n) = Adom.shape;
   const d = if m < n then 0 else 1;
