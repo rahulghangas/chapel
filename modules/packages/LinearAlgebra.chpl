@@ -892,7 +892,15 @@ proc diag(A: [?Adom] ?eltType, k=0) {
 }
 
 proc diag(A: [?Adom] ?eltType, k=0) where isDistributed(A) {
-  return 0;
+  if (Adom.rank == 2) {
+    if (k == 0) then
+      return _diag_dist_vec(A);
+    else
+      return _diag_vec(A, k);
+  }
+  else if (Adom.rank == 1) then
+    return _diag_mat(A);
+  else compilerError("A must have rank 2 or less");
 }
 
 private proc _diag_vec(A:[?Adom] ?eltType) {
@@ -947,6 +955,19 @@ private proc _diag_mat(A:[?Adom] ?eltType){
 
   forall i in Adom.dim(0) do
     diagonal[i, i] = A[i];
+
+  return diagonal;
+}
+
+proc _dist_diag_vec(A:[?Adom] ?eltType) {
+  const (m, n) = Adom.shape;
+  const d = if m < n then 0 else 1;
+  const diagSize = Adom.dim(d).size;
+
+  var diagDom : subdomain(Adom) = [(i,j) in zip(Adom.dim(0) # diagSize, 
+                                                Adom.dim(1) # diagSize)] (i,j);
+
+  var diagonal : [diagDom] = A[diagDom];
 
   return diagonal;
 }
