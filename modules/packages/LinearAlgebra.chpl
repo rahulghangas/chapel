@@ -964,7 +964,7 @@ proc _dist_diag_vec(A:[?Adom] ?eltType) {
   const d = if m < n then 0 else 1;
   const diagSize = Adom.dim(d).size;
 
-  var diagDom : sparsesubdomain(Adom) = [(i,j) in zip(Adom.dim(0) # diagSize,
+  var diagDom : sparse subdomain(Adom) = [(i,j) in zip(Adom.dim(0) # diagSize,
                                                       Adom.dim(1) # diagSize)
                                         ] (i,j);
 
