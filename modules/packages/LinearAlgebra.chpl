@@ -897,7 +897,6 @@ proc diag(A: [?Adom] ?eltType, k=0) where isDistributed(A) {
       return _dist_diag_vec(A);
   }
   return _dist_diag_vec(A);
-  else compilerError("A must have rank 2 or less");
 }
 
 private proc _diag_vec(A:[?Adom] ?eltType) {
