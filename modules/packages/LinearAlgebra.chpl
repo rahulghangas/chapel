@@ -894,7 +894,7 @@ proc diag(A: [?Adom] ?eltType, k=0) {
 proc diag(A: [?Adom] ?eltType, k=0) where isDistributed(A) {
   if (Adom.rank == 2) {
     if (k == 0) then
-      return _diag_dist_vec(A);
+      return _dist_diag_vec(A);
     else
       return _diag_vec(A, k);
   }
