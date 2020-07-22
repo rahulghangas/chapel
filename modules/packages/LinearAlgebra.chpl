@@ -967,7 +967,7 @@ proc _dist_diag_vec(A:[?Adom] ?eltType) {
   var diagDom : subdomain(Adom) = [(i,j) in zip(Adom.dim(0) # diagSize, 
                                                 Adom.dim(1) # diagSize)] (i,j);
 
-  var diagonal : [diagDom] = A[diagDom];
+  var diagonal : [diagDom] eltType = A[diagDom];
 
   return diagonal;
 }
