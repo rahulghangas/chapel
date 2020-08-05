@@ -35,14 +35,26 @@ Basic Usage
 Starting a New Package
 ~~~~~~~~~~~~~~~~~~~~~~
 
-To initialize a new mason package, run the ``mason new [ package name ] [ options ]`` command, for example::
+To initialize a new mason package, run ``mason new``. The same can also be done using ``mason init`` as follows: 
+
+  .. code-block:: sh
+
+    mkdir newPackage
+    cd newPackage
+    mason init
+
+
+This starts an interactive session which walks an user through the process of creating a project using Mason. This is highly recommended for new users.
+
+A more advanced user may use the ``mason new [ options ] <project name>`` command, for example::
 
     mason new MyPackage
 
 This creates a git repository by default, unless ``--no-vcs`` is included.
 
-Mason packages can also be initialized using the ``mason init [options] [directory path]`` or 
-``mason init [options]`` command outside or inside the project directory respectively. 
+Mason packages can also be initialized using the ``mason init [options] [directory path]``.
+To avoid the interactive session while initializing the project, run ``mason init -d | --default``. 
+
 
 For example, for an existing directory named MyPackage, 
     
@@ -53,7 +65,7 @@ For example, for an existing directory named MyPackage,
     # OR 
 
     cd MyPackage
-    mason init  
+    mason init -d  
 
 
 The package will have the following hierarchy::
@@ -547,8 +559,9 @@ through the Spack integration. The following is a workflow of finding, installin
 First, the Spack backend must be installed. Users can have mason install Spack
 or point mason to an existing spack installation.
 
-This command will install Spack into ``$MASON_HOME`` and set it up so that it
-can be used by Mason::
+This command will install Spack into ``$MASON_HOME/spack`` and set it up so that it
+can be used by Mason. It should be noted that this command pulls from the `master` branch of spack
+for setting up the spack registry at ``$MASON_HOME/spack-registry``::
 
   mason external --setup
 

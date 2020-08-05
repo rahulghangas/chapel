@@ -1168,6 +1168,19 @@ static void setupShadowVars() {
 
 static CallExpr* resolveModuleGetNewExpr(CallExpr* call, Symbol* sym);
 
+// Track modules that we name explicitly in the scope where we do so
+static void storeReferencedMod(ModuleSymbol* mod, BaseAST* cur) {
+  if (cur == NULL) {
+    return;
+  }
+  BaseAST* scope = getScope(cur);
+  if (BlockStmt* block = toBlockStmt(scope)) {
+    block->modRefsAdd(mod);
+  } else {
+    storeReferencedMod(mod, scope);
+  }
+}
+
 static void resolveModuleCall(CallExpr* call) {
   if (call->isNamedAstr(astrSdot) == true) {
     astlocT* renameLoc = NULL;
@@ -1186,21 +1199,23 @@ static void resolveModuleCall(CallExpr* call) {
         ModuleSymbol* currModule = call->getModule();
         ResolveScope* scope      = ResolveScope::getScopeFor(mod->block);
         const char*   mbrName    = get_string(call->get(2));
-        ModuleSymbol* modArg     = mod;  // module= argument to the CallExpr
 
         currModule->moduleUseAdd(mod);
+
+        // Track modules that we name explicitly in the scope where we do so
+        storeReferencedMod(mod, call);
 
         // First, try regular scope resolution
         Symbol* sym = scope->lookupNameLocally(mbrName);
 
         // Then, try public import statements in the module
         if (!sym) {
-          sym = scope->lookupPublicImports(mbrName);
+          sym = scope->lookupPublicVisStmts(mbrName);
         }
 
         // Then, try public import statements that enables unqualified access
         if (!sym) {
-          sym = scope->lookupPublicUnqualAccessSyms(mbrName, modArg, call);
+          sym = scope->lookupPublicUnqualAccessSyms(mbrName, call);
         }
 
         // Adjust class types to undecorated
@@ -1229,14 +1244,14 @@ static void resolveModuleCall(CallExpr* call) {
 
                 call->replace(new UnresolvedSymExpr(mbrName));
 
-                parent->insertAtHead(modArg);
+                parent->insertAtHead(mod);
                 parent->insertAtHead(gModuleToken);
               }
 
             } else if (CallExpr* c = resolveModuleGetNewExpr(call, sym)) {
               call->replace(new SymExpr(sym));
 
-              c->insertAtHead(modArg);
+              c->insertAtHead(mod);
               c->insertAtHead(gModuleToken);
 
             } else {

@@ -66,12 +66,15 @@ proc UpdateLock(args: list(string), tf="Mason.toml", lf="Mason.lock") {
     const tomlPath = projectHome + "/" + tf;
     const lockPath = projectHome + "/" + lf;
 
-
     updateRegistry(tf, args);
     const openFile = openreader(tomlPath);
     const TomlFile = parseToml(openFile);
+    if isDir(SPACK_ROOT) && TomlFile.pathExists('external') {
+      if getSpackVersion != spackVersion then
+      throw new owned MasonError("Mason has been updated. " +
+                  "To install Spack, call: mason external --setup.");
+    }
     const lockFile = createDepTree(TomlFile);
-
     if failedChapelVersion.size > 0 {
       const prefix = if failedChapelVersion.size == 1
         then "The following package is"
@@ -81,10 +84,8 @@ proc UpdateLock(args: list(string), tf="Mason.toml", lf="Mason.lock") {
         stderr.writeln("  ", msg);
       exit(1);
     }
-
     // Generate Lock File
     genLock(lockFile, lockPath);
-
     // Close Memory
     openFile.close();
     delete TomlFile;
@@ -150,7 +151,6 @@ proc updateRegistry(tf: string, args: list(string)) {
     writeln('Skipping update due to MASON_OFFLINE=true');
     return;
   }
-
   checkRegistryChanged();
   for ((name, registry), registryHome) in zip(MASON_REGISTRY, MASON_CACHED_REGISTRY) {
 
@@ -193,10 +193,26 @@ proc parseChplVersion(brick: borrowed Toml?): (VersionInfo, VersionInfo) {
   }
 
   const chplVersion = brick!["chplVersion"]!.s;
-  var low, hi : VersionInfo;
+  var low, high : VersionInfo;
 
   try {
-    const formatMessage = "\n\n" +
+    var res = checkChplVersion(chplVersion, low, high);
+    low = res[0];
+    high = res[1];
+  } catch e : Error {
+    const name = brick!["name"]!.s + "-" + brick!["version"]!.s;
+    stderr.writeln("Invalid chplVersion in package '", name, "': ", chplVersion);
+    stderr.writeln("Details: ", e.message());
+    exit(1);
+  }
+
+  return (low, high);
+}
+
+proc checkChplVersion(chplVersion, low, high) throws {
+  use Regexp;
+  var lo, hi : VersionInfo;
+  const formatMessage = "\n\n" +
     "chplVersion format must be '<version>..<version>' or '<version>'\n" +
     "A <version> must be in one of the following formats:\n" +
     "  x.x.x\n" +
@@ -230,24 +246,17 @@ proc parseChplVersion(brick: borrowed Toml?): (VersionInfo, VersionInfo) {
       return ret;
     }
 
-    low = parseString(versions[0]);
+    lo = parseString(versions[0]);
 
     if (versions.size == 1) {
       hi = new VersionInfo(max(int), max(int), max(int));
     } else {
       hi = parseString(versions[1]);
     }
+     if (lo <= hi) == false then
+      throw new owned MasonError("Lower bound of chplVersion must be <= upper bound: " + lo.str() + " > " + hi.str());
 
-    if (low <= hi) == false then
-      throw new owned MasonError("Lower bound of chplVersion must be <= upper bound: " + low.str() + " > " + hi.str());
-  } catch e : Error {
-    const name = brick!["name"]!.s + "-" + brick!["version"]!.s;
-    stderr.writeln("Invalid chplVersion in package '", name, "': ", chplVersion);
-    stderr.writeln("Details: ", e.message());
-    exit(1);
-  }
-
-  return (low, hi);
+      return (lo, hi);
 }
 
 proc verifyChapelVersion(brick:borrowed Toml) {

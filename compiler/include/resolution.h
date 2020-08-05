@@ -226,9 +226,11 @@ void      getAutoCopyTypeKeys(Vec<Type*>& keys);
 FnSymbol* getAutoCopy(Type* t);             // returns NULL if there are none
 FnSymbol* getAutoDestroy(Type* t);          //  "
 FnSymbol* getUnalias(Type* t);
+FnSymbol* getCoerceMoveFromCoerceCopy(FnSymbol* coerceCopyFn);
 const char* getErroneousCopyError(FnSymbol* fn);
 void markCopyErroneous(FnSymbol* fn, const char* err);
 
+bool isDefaultInitializable(Type* t);
 
 bool isPOD(Type* t);
 bool recordContainingCopyMutatesField(Type* at);
@@ -288,7 +290,8 @@ void expandInitFieldPrims();
 
 void removeCopyFns(Type* t);
 
-bool isUnusedClass(Type* t);
+std::set<Type*> getWellKnownTypesSet();
+bool isUnusedClass(Type* t, const std::set<Type*>& wellknown);
 
 void pruneResolvedTree();
 
@@ -328,4 +331,7 @@ void startGenerousResolutionForErrors();
 bool inGenerousResolutionForErrors();
 void stopGenerousResolutionForErrors();
 
+
+// Return the array element type, or NULL if not an array
+Type* arrayElementType(Type* arrayType);
 #endif

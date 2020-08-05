@@ -50,8 +50,10 @@ module ChapelStandard {
   use LocalesArray;
   use ChapelArray;
   use ChapelDistribution;
+  use ChapelAutoLocalAccess;
   use ChapelIO;
   use LocaleTree;
+  use ChapelHashing;
   use DefaultAssociative;
   use DefaultSparse;
   use ChapelTaskID;
@@ -64,7 +66,7 @@ module ChapelStandard {
   use ExportWrappers;
 
   // Standard modules.
-  use Assert;
+  use Builtins;
   use Types;
   use Math;
 

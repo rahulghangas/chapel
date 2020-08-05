@@ -21,12 +21,12 @@
 module BytesStringCommon {
   private use ChapelStandard;
   private use SysCTypes;
-  private use Bytes;
   private use ByteBufferHelpers;
+  private use String.NVStringFactory;
 
   /*
      ``decodePolicy`` specifies what happens when there is malformed characters
-     when decoding a :record:`bytes` into a UTF-8 :record:`~String.string`.
+     when decoding a :mod:`Bytes` into a UTF-8 :record:`~String.string`.
        
        - **strict**: default policy; raise error
        - **replace**: replace with UTF-8 replacement character
@@ -40,7 +40,7 @@ module BytesStringCommon {
   /*
      ``encodePolicy`` specifies what happens when there is escaped non-UTF8
      bytes when encoding a :record:`~String.string` into a
-     :record:`~Bytes.bytes`.
+     :mod:`Bytes`.
        
        - **pass**: default policy; copy directly
        - **unescape**: recover the original data from the escaped data
@@ -90,10 +90,6 @@ module BytesStringCommon {
   */
   proc decodeByteBuffer(buff: bufferType, length: int, policy: decodePolicy)
       throws {
-
-    pragma "fn synchronization free"
-    extern proc qio_decode_char_buf(ref chr:int(32), ref nbytes:c_int,
-                                    buf:c_string, buflen:ssize_t): syserr;
     pragma "fn synchronization free"
     extern proc qio_encode_char_buf(dst: c_void_ptr, chr: int(32)): syserr;
     pragma "fn synchronization free"
@@ -103,37 +99,34 @@ module BytesStringCommon {
     // is in fact perfectly decodable. In the worst case, the user wants the
     // replacement policy and we grow the buffer couple of times.
     // The alternative is to allocate more space from the beginning.
-    var ret: string;
     var (newBuff, allocSize) = bufferAlloc(length+1);
-    ret.buff = newBuff;
-    ret.buffSize = allocSize;
-    ret.isOwned = true;
-    ret.hasEscapes = false;
+    var hasEscapes = false;
+    var numCodepoints = 0;
 
-    var expectedSize = ret.buffSize;
+    var expectedSize = allocSize;
 
     var thisIdx = 0;
     var decodedIdx = 0;
     while thisIdx < length {
-      var cp: int(32);
-      var nbytes: c_int;
-      var bufToDecode = (buff + thisIdx): c_string;
-      var maxbytes = (length - thisIdx): ssize_t;
-      const decodeRet = qio_decode_char_buf(cp, nbytes,
-                                            bufToDecode, maxbytes);
+      const (decodeRet, cp, nBytes) = decodeHelp(buff, length, 
+                                                 thisIdx, 
+                                                 allowEsc=false);
+      var buffToDecode = buff + thisIdx;
+
+      numCodepoints += 1;
 
       if decodeRet != 0 {  //decoder returns error
         if policy == decodePolicy.strict {
           throw new owned DecodeError();
         }
         else {
-          // if nbytes is 1, then we must have read a single byte and found
-          // that it was invalid, if nbytes is >1 then we must have read
+          // if nBytes is 1, then we must have read a single byte and found
+          // that it was invalid, if nBytes is >1 then we must have read
           // multiple bytes where the last one broke the sequence. But it can
           // be a valid byte itself. So we rewind by 1 in that case
           // we use nInvalidBytes to store how many bytes we are ignoring or
           // replacing
-          const nInvalidBytes = if nbytes==1 then nbytes else nbytes-1;
+          const nInvalidBytes = if nBytes==1 then nBytes else nBytes-1;
           thisIdx += nInvalidBytes;
 
           if policy == decodePolicy.replace {
@@ -142,28 +135,35 @@ module BytesStringCommon {
             // Replacement can cause the string to be larger than initially
             // expected. The Unicode replacement character has codepoint
             // 0xfffd. It is encoded in `encodedReplChar` and its encoded
-            // length is `nbytesRepl`, which is 3 bytes in UTF8. If it is used
+            // length is `nBytesRepl`, which is 3 bytes in UTF8. If it is used
             // in place of a single byte, we may overflow
             expectedSize += 3-nInvalidBytes;
-            (ret.buff, ret.buffSize) = bufferEnsureSize(ret.buff, ret.buffSize,
-                                                     expectedSize);
+            (newBuff, allocSize) = bufferEnsureSize(newBuff, allocSize,
+                                                    expectedSize);
 
-            qio_encode_char_buf(ret.buff+decodedIdx, replChar);
+            qio_encode_char_buf(newBuff+decodedIdx, replChar);
 
             decodedIdx += 3;  // replacement character is 3 bytes in UTF8
           }
           else if policy == decodePolicy.escape {
+              
+            hasEscapes = true;
 
-            ret.hasEscapes = true;
             // encoded escape sequence is 3 bytes. And this is per invalid byte
             expectedSize += 2*nInvalidBytes;
-            (ret.buff, ret.buffSize) = bufferEnsureSize(ret.buff, ret.buffSize,
+            (newBuff, allocSize) = bufferEnsureSize(newBuff, allocSize,
                                                      expectedSize);
             for i in 0..#nInvalidBytes {
-              qio_encode_char_buf(ret.buff+decodedIdx,
+              qio_encode_char_buf(newBuff+decodedIdx,
                                   0xdc00+buff[thisIdx-nInvalidBytes+i]);
               decodedIdx += 3;
             }
+
+            // adjust number of codepoints: for each invalid byte in this
+            // sequence we add one codepoint. However, we already incremented
+            // by one in the beginning of the loop:
+            numCodepoints += nInvalidBytes-1;
+
           }
           // if policy == decodePolicy.ignore, we don't do anything and skip over
           // the invalid sequence
@@ -171,16 +171,72 @@ module BytesStringCommon {
       }
       else {  // we got valid characters
         // do a naive copy
-        bufferMemcpyLocal(dst=ret.buff, src=bufToDecode, len=nbytes,
+        bufferMemcpyLocal(dst=newBuff, src=buffToDecode, len=nBytes,
                           dst_off=decodedIdx);
-        thisIdx += nbytes;
-        decodedIdx += nbytes;
+        thisIdx += nBytes;
+        decodedIdx += nBytes;
       }
     }
 
-    ret.buffLen = decodedIdx;
-    ret.buff[ret.buffLen] = 0;
+    newBuff[decodedIdx] = 0;
+    var ret = chpl_createStringWithOwnedBufferNV(x=newBuff,
+                                                 length=decodedIdx,
+                                                 size=allocSize,
+                                                 numCodepoints=numCodepoints);
+    ret.hasEscapes = hasEscapes;
     return ret;
+  }
+
+  /*
+    This function decodeHelp is used to create a wrapper for 
+    qio_decode_char_buf* and qio_decode_char_buf_esc and return 
+    the value of syserr , cp and nBytes.
+      
+      :arg buff: Buffer to decode 
+      
+      :arg buffLen: Size of buffer
+      
+      :arg offset: Starting index of read buffer,
+      
+      :arg allowEsc:  Choice between "qio_decode_char_buf" 
+                      and "qio_decode_char_buf_esc" that allows 
+                      escaped sequences in the string
+    
+    :returns: Tuple of decodeRet, chr and nBytes
+              decodeRet : error code : syserr
+              chr : corresponds to codepoint 
+              nBytes : number of bytes of corresponding UTF-8 encoding
+   */
+  proc decodeHelp(buff:c_ptr(uint(8)), buffLen:int, 
+                  offset:int, allowEsc: bool ) {
+    pragma "fn synchronization free"
+    extern proc qio_decode_char_buf(ref chr:int(32), 
+                                    ref nBytes:c_int,
+                                    buf:c_string,
+                                    buflen:ssize_t): syserr;
+    pragma "fn synchronization free"
+    extern proc qio_decode_char_buf_esc(ref chr:int(32),
+                                        ref nBytes:c_int,
+                                        buf:c_string,
+                                        buffLen:ssize_t): syserr;
+    // esc chooses between qio_decode_char_buf_esc and
+    // qio_decode_char_buf as a single wrapper function 
+    var chr: int(32);
+    var nBytes: c_int;
+    var start = offset:c_int;
+    var multibytes = (buff + start): c_string;
+    var maxbytes = (buffLen - start): ssize_t;
+    var decodeRet: syserr;
+    if(allowEsc) then
+      decodeRet = qio_decode_char_buf_esc(chr, nBytes, 
+                                          multibytes,
+                                          maxbytes);
+    else
+      decodeRet = qio_decode_char_buf(chr, nBytes,
+                                      multibytes, 
+                                      maxbytes);
+
+    return (decodeRet, chr, nBytes);
   }
 
   proc initWithBorrowedBuffer(ref x: ?t, other: t) {
@@ -199,11 +255,13 @@ module BytesStringCommon {
         x.isOwned = true;
         x.buff = bufferCopyRemote(other.locale_id, other.buff, otherLen);
         x.buffLen = otherLen+1;
+        if t == string then x.cachedNumCodepoints = other.cachedNumCodepoints;
       }
       else {
         // if other is local just adjust my buff and _size
         x.buff = other.buff;
         x.buffSize = other.buffSize;
+        if t == string then x.cachedNumCodepoints = other.cachedNumCodepoints;
       }
     }
   }
@@ -220,7 +278,7 @@ module BytesStringCommon {
     x.buffLen = length;
   }
 
-  proc initWithOwnedBuffer(ref x: ?t, other: bufferType, length:int, size:int) {
+  inline proc initWithOwnedBuffer(ref x: ?t, other: bufferType, length:int, size:int) {
     assertArgType(t, "initWithOwnedBuffer");
 
     x.isOwned = true;
@@ -232,17 +290,18 @@ module BytesStringCommon {
     x.buffLen = length;
   }
 
-  proc initWithNewBuffer(ref x: ?t, other: t) {
+  inline proc initWithNewBuffer(ref x: ?t, other: t) {
     assertArgType(t, "initWithNewBuffer");
 
     const otherRemote = other.locale_id != chpl_nodeID;
     const otherLen = other.numBytes;
     x.isOwned = true;
     if t == string then x.hasEscapes = other.hasEscapes;
+    if t == string then x.cachedNumCodepoints = other.cachedNumCodepoints;
 
     if otherLen > 0 {
       x.buffLen = otherLen;
-      if otherRemote {
+      if !_local && otherRemote {
         // if s is remote, copy and own the buffer
         x.buff = bufferCopyRemote(other.locale_id, other.buff, otherLen);
         x.buffSize = otherLen+1;
@@ -273,45 +332,137 @@ module BytesStringCommon {
     }
   }
 
+  // Checks to see if r is inside the bounds of this and returns a finite
+  // range that can be used to iterate over a section of the string
+  //
+  // This function handles ranges of codepointIndex, byteIndex or numeric types.
+  // codepointIndex only makes sense for string, whereas the others can be used
+  // with both bytes and string
+  //
+  // If codepointIndex range was given, converts that to byte index range in the
+  // process.
+  proc getView(const ref x: ?t, r: range(?)) {
+    assertArgType(t, "getView");
+    if t == bytes && r.idxType == codepointIndex {
+      compilerError("codepointIndex ranges cannot be used with bytes in getView");
+    }
+
+    if t == bytes || r.idxType == byteIndex {
+      // cast the argument r to `int` to make sure that we are not dealing with
+      // byteIndex
+      const intR = r:range(int, r.boundedType, r.stridable);
+      if boundsChecking {
+        if !x.byteIndices.boundsCheck(intR) {
+          halt("range ", r, " out of bounds for " + t:string + " with ",
+               x.numBytes, " bytes");
+        }
+      }
+      return (intR[x.byteIndices], -1);  // -1; I can't know numCodepoints
+    }
+    else {  // string with codepoint indexing
+      if r.stridable {
+        // Slicing by stridable codepoint ranges is unsupported because it
+        // creates an irregular sequence of bytes.  We could add support in the
+        // future by refactoring the callers of _getView() to add a slow path,
+        // or by storing an array of indices marking the beginning of each
+        // codepoint alongside the string.
+        compilerError("string slicing doesn't support stridable codepoint ranges");
+      }
+
+      if r == x.indices then return (x.byteIndices, x.cachedNumCodepoints);
+
+      // cast the argument r to `int` to make sure that we are not dealing with
+      // codepointIdx
+      const intR = r:range(int, r.boundedType, r.stridable);
+      if boundsChecking {
+        if !x.indices.boundsCheck(intR) {
+          halt("range ", r, " out of bounds for string with length ", x.size);
+        }
+      }
+
+      // find the byte range of the given codepoint range
+      var cpCount = 0;
+      const cpIdxLow = if intR.hasLowBound() && intR.alignedLow:int >= 0
+                          then intR.alignedLow:int
+                          else 0;
+      const cpIdxHigh = if intR.hasHighBound()
+                           then intR.alignedHigh:int
+                           else x.buffLen-1;
+
+      var byteLow = x.buffLen;  // empty range if bounds outside string
+      var byteHigh = x.buffLen - 1;
+
+      if cpIdxHigh >= 0 {
+        for (i, nBytes) in x._indexLen() {
+          if cpCount == cpIdxLow {
+            byteLow = i:int;
+            if !r.hasHighBound() then
+              break;
+          }
+          if cpCount == cpIdxHigh {
+            byteHigh = i:int + nBytes-1;
+            break;
+          }
+          cpCount += 1;
+        }
+      }
+      return (byteLow..byteHigh, cpIdxHigh-cpIdxLow+1);
+    }
+  }
+
   // TODO: I wasn't very good about caching variables locally in this one.
   proc getSlice(const ref x: ?t, r: range(?)) {
     assertArgType(t, "getSlice");
 
-    var ret: t;
-    if x.isEmpty() then return ret;
-
-    const r2 = x._getView(r);
-    if r2.size <= 0 {
-      // TODO: I can't just return "" (ret var gets freed for some reason)
-      ret = "";
-    } else {
-      // In case r1 is strided, we cannot just use r2.size for the copy
-      // length. For to be able to cover strided copies, we copy the range
-      // from low to high then do a strided operation to put the data in the
-      // buffer in the correct order.
-      const copyLen = r2.high-r2.low+1;
-      var (copyBuf, copySize) = bufferCopy(buf=x.buff, off=r2.low,
-                                          len=copyLen, loc=x.locale_id);
-      if r2.stride == 1 {
-        // TODO Engin: I'd like to call init or something that constructs a
-        // new bytes/string object instead of doing the these all the time
-        ret.buff = copyBuf;
-        ret.buffSize = copySize;
-      }
-      else {
-        // the range is strided
-        var (newBuff, allocSize) = bufferAlloc(r2.size+1);
-        for (r2_i, i) in zip(r2, 0..) {
-          newBuff[i] = copyBuf[r2_i-r2.low];
-        }
-        ret.buff = newBuff;
-        ret.buffSize = allocSize;
-        bufferFree(copyBuf);
-      }
-      ret.buffLen = r2.size;
-      ret.buff[ret.buffLen] = 0;
+    if x.isEmpty() {
+      var ret: t;
+      return ret;
     }
-    return ret;
+
+    const (r2, numChars) = getView(x, r);
+    if r2.size <= 0 {
+      var ret: t;
+      return ret;
+    }
+
+    var buff: bufferType;
+    var buffSize: int;
+
+    // In case r1 is strided, we cannot just use r2.size for the copy
+    // length. For to be able to cover strided copies, we copy the range
+    // from low to high then do a strided operation to put the data in the
+    // buffer in the correct order.
+    const copyLen = r2.high-r2.low+1;
+    var (copyBuf, copySize) = bufferCopy(buf=x.buff, off=r2.low,
+                                        len=copyLen, loc=x.locale_id);
+    if r2.stride == 1 {
+      buff = copyBuf;
+      buffSize = copySize;
+    }
+    else {
+      // the range is strided
+      var (newBuff, allocSize) = bufferAlloc(r2.size+1);
+      for (r2_i, i) in zip(r2, 0..) {
+        newBuff[i] = copyBuf[r2_i-r2.low];
+      }
+      buff = newBuff;
+      buffSize = allocSize;
+      bufferFree(copyBuf);
+    }
+    const buffLen = r2.size;
+    buff[buffLen] = 0;
+
+    if t == string {
+      var numCodepoints = numChars;
+      if numCodepoints == -1 {
+        numCodepoints = countNumCodepoints(buff, buffLen);
+      }
+      return chpl_createStringWithOwnedBufferNV(x=buff, length=buffLen,
+          size=buffSize, numCodepoints=numCodepoints);
+    }
+    else {
+      return createBytesWithOwnedBuffer(x=buff, length=buffLen, size=buffSize);
+    }
   }
 
   proc getIndexType(type t) type {
@@ -338,6 +489,7 @@ module BytesStringCommon {
       if idx == -1 then break;
 
       found += 1;
+
       result = result[..idx-1] + localReplacement +
                result[(idx + localNeedle.numBytes)..];
 
@@ -455,7 +607,7 @@ module BytesStringCommon {
     assertArgType(t, "doJoin");
 
     if S.size == 0 {
-      return '';
+      return "":t;
     } else if S.size == 1 {
       // TODO: ensures copy, clean up when no longer needed
       var ret: t;
@@ -469,15 +621,12 @@ module BytesStringCommon {
       var joinedSize: int = x.buffLen * (S.size - 1);
       for s in S do joinedSize += s.numBytes;
 
+      var numCodepoints = 0;
+
       if joinedSize == 0 then
-        return '';
+        return "":t;
 
-      var joined: t;
-      joined.buffLen = joinedSize;
-
-      var (newBuff, allocSize) = bufferAlloc(joined.buffLen+1);
-      joined.buffSize = allocSize;
-      joined.buff = newBuff;
+      var (newBuff, allocSize) = bufferAlloc(joinedSize+1);
 
       var first = true;
       var offset = 0;
@@ -488,20 +637,32 @@ module BytesStringCommon {
         if first {
           first = false;
         } else if x.buffLen != 0 {
-          bufferMemcpyLocal(dst=joined.buff, src=x.buff, len=x.buffLen,
+          bufferMemcpyLocal(dst=newBuff, src=x.buff, len=x.buffLen,
                             dst_off=offset);
           offset += x.buffLen;
+          if t == string then numCodepoints += x.numCodepoints;
         }
 
         // copy s's contents
         if sLen != 0 {
-          bufferMemcpy(dst=joined.buff, dst_off=offset,
+          bufferMemcpy(dst=newBuff, dst_off=offset,
                        src_loc=s.locale_id, src=s.buff,len=sLen);
           offset += sLen;
+          if t == string then numCodepoints += s.numCodepoints;
         }
       }
-      joined.buff[joined.buffLen] = 0;
-      return joined;
+      newBuff[joinedSize] = 0;
+      if t == string {
+        return chpl_createStringWithOwnedBufferNV(x=newBuff,
+                                                  length=joinedSize,
+                                                  size=allocSize,
+                                                  numCodepoints=numCodepoints);
+      }
+      else {
+        return createBytesWithOwnedBuffer(x=newBuff,
+                                          length=joinedSize,
+                                          size=allocSize);
+      }
     }
   }
 
@@ -527,8 +688,9 @@ module BytesStringCommon {
 
     on __primitive("chpl_on_locale_num",
                    chpl_buildLocaleID(lhs.locale_id, c_sublocid_any)) {
-      const rhsLen = rhs.buffLen;
-      const newLength = lhs.buffLen+rhsLen; //TODO: check for overflow
+      if !safeAdd(lhs.buffLen,rhs.buffLen) then 
+        halt("Buffer overflow allocating string copy data");
+      const newLength = lhs.buffLen + rhs.buffLen;
       //resize the buffer if needed
       if lhs.buffSize <= newLength {
         const requestedSize = max(newLength+1,
@@ -546,11 +708,74 @@ module BytesStringCommon {
         }
       }
       // copy the data from rhs
-      bufferMemcpy(dst=lhs.buff, src_loc=rhs.locale_id, rhs.buff, rhsLen,
+      bufferMemcpy(dst=lhs.buff, src_loc=rhs.locale_id, rhs.buff, rhs.buffLen,
                    dst_off=lhs.buffLen);
       lhs.buffLen = newLength;
       lhs.buff[newLength] = 0;
+      if t == string then lhs.cachedNumCodepoints += rhs.cachedNumCodepoints;
     }
+  }
+
+  proc reinitWithNewBuffer(ref lhs: ?t, buff: bufferType, buffLen: int,
+                           buffSize: int, numCodepoints: int = 0) {
+      if lhs.isEmpty() && buff == nil then return;
+
+      // If the lhs.buff is longer than buff, then reuse the buffer if we are
+      // allowed to (lhs.isOwned == true)
+      if buffLen != 0 {
+        if !lhs.isOwned || buffLen+1 > lhs.buffSize {
+          // If the new string is too big for our current buffer or we dont
+          // own our current buffer then we need a new one.
+          if lhs.isOwned && !lhs.isEmpty() then
+            bufferFree(lhs.buff);
+          // TODO: should I just allocate 'size' bytes?
+          const (buff, allocSize) = bufferAlloc(buffLen+1);
+          lhs.buff = buff;
+          lhs.buffSize = allocSize;
+          // We just allocated a buffer, make sure to free it later
+          lhs.isOwned = true;
+        }
+        bufferMemmoveLocal(lhs.buff, buff, buffLen);
+        lhs.buff[buffLen] = 0;
+      } else {
+        // If buffLen is 0, 'buf' may still have been allocated. Regardless, we
+        // need to free the old buffer if 'lhs' is isOwned.
+        if lhs.isOwned && !lhs.isEmpty() then bufferFree(lhs.buff);
+        lhs.buffSize = 0;
+
+        // If we need to copy, we can just set 'buff' to nil. Otherwise the
+        // implication is that the string takes ownership of the given buffer,
+        // so we need to store it and free it later.
+        lhs.buff = nil;
+      }
+
+      lhs.buffLen = buffLen;
+      if t==string then lhs.cachedNumCodepoints = numCodepoints;
+  }
+
+  proc reinitWithOwnedBuffer(ref lhs: ?t, buff: bufferType, buffLen: int,
+                             buffSize: int, numCodepoints: int = 0) {
+
+      if lhs.isEmpty() && buff == nil then return;
+
+      // If the lhs.buff is longer than buff, then reuse the buffer if we are
+      // allowed to (lhs.isOwned == true)
+      if buffLen != 0 {
+        if lhs.isOwned && !lhs.isEmpty() then
+          bufferFree(lhs.buff);
+        lhs.buff = buff;
+        lhs.buffSize = buffSize;
+      } else {
+        // If buffLen is 0, 'buf' may still have been allocated. Regardless, we
+        // need to free the old buffer if 'lhs' is isOwned.
+        if lhs.isOwned && !lhs.isEmpty() then bufferFree(lhs.buff);
+        lhs.buff = buff;
+        lhs.buffSize = 0;
+      }
+
+      lhs.isOwned = true;
+      lhs.buffLen = buffLen;
+      if t==string then lhs.cachedNumCodepoints = numCodepoints;
   }
 
   proc doAssign(ref lhs: ?t, rhs: t) {
@@ -558,14 +783,25 @@ module BytesStringCommon {
 
     inline proc helpMe(ref lhs: t, rhs: t) {
       if _local || rhs.locale_id == chpl_nodeID {
-        lhs.reinitString(rhs.buff, rhs.buffLen, rhs.buffSize, needToCopy=true);
+        if t == string {
+          reinitWithNewBuffer(lhs, rhs.buff, rhs.buffLen, rhs.buffSize,
+                              rhs.numCodepoints);
+        }
+        else {
+          reinitWithNewBuffer(lhs, rhs.buff, rhs.buffLen, rhs.buffSize);
+        }
       } else {
-        const len = rhs.buffLen; // cache the remote copy of len
+        const len = rhs.buffLen;
         var remote_buf:bufferType = nil;
         if len != 0 then
           remote_buf = bufferCopyRemote(rhs.locale_id, rhs.buff, len);
-        lhs.reinitString(remote_buf, len, len+1, needToCopy=false,
-                                                 ownBuffer=true);
+        if t==string {
+          reinitWithOwnedBuffer(lhs, remote_buf, len, len+1,
+                                rhs.cachedNumCodepoints);
+        }
+        else {
+          reinitWithOwnedBuffer(lhs, remote_buf, len, len+1);
+        }
       }
     }
 
@@ -578,18 +814,6 @@ module BytesStringCommon {
         helpMe(lhs, rhs);
       }
     }
-  }
-
-  proc doAssign(ref lhs: ?t, rhs_c: c_string) {
-    assertArgType(t, "doAssign");
-
-    // Make this some sort of local check once we have local types/vars
-    if !_local && (lhs.locale_id != chpl_nodeID) then
-      halt("Cannot assign a c_string to a remote string.");
-
-    const len = rhs_c.size;
-    const buff:bufferType = rhs_c:bufferType;
-    lhs.reinitString(buff, len, len+1, needToCopy=true);
   }
 
   proc doMultiply(const ref x: ?t, n: integral) {
@@ -608,45 +832,52 @@ module BytesStringCommon {
       compilerError("Unexpected type");
     }
 
-    // TODO Engin: Implement a factory function for this case
-    var ret: t;
-    ret.buffLen = sLen * n; // TODO: check for overflow
-    var (buff, allocSize) = bufferAlloc(ret.buffLen+1);
-    ret.buff = buff;
-    ret.buffSize = allocSize;
-    ret.isOwned = true;
+    if !safeMul(sLen, n) then 
+      halt("Buffer overflow allocating string copy data");
 
-    bufferMemcpy(dst=ret.buff, src_loc=x.locale_id, src=x.buff, len=x.buffLen);
+    const buffLen = sLen * n;
+    var (buff, allocSize) = bufferAlloc(buffLen+1);
 
+    bufferMemcpy(dst=buff, src_loc=x.locale_id, src=x.buff, len=x.buffLen);
     var offset = sLen;
     for i in 1..(n-1) {
-      bufferMemcpyLocal(dst=ret.buff, src=ret.buff, len=x.buffLen,
+      bufferMemcpyLocal(dst=buff, src=buff, len=x.buffLen,
                         dst_off=offset);
       offset += sLen;
     }
-    ret.buff[ret.buffLen] = 0;
-    return ret;
+    buff[buffLen] = 0;
+
+    if t==string {
+      return chpl_createStringWithOwnedBufferNV(buff, buffLen, allocSize,
+                                                x.cachedNumCodepoints*n);
+    }
+    else {
+      return createBytesWithOwnedBuffer(buff, buffLen, allocSize);
+    }
   }
 
   proc doConcat(s0: ?t, s1: t): t {
+    assertArgType(t, "doConcat");
+
     // cache lengths locally
     const s0len = s0.buffLen;
     if s0len == 0 then return s1:t;
     const s1len = s1.buffLen;
     if s1len == 0 then return s0;
 
-    // TODO Engin: Implement a factory function for this case
-    var ret: t;
-    ret.buffLen = s0len + s1len;
-    var (buff, allocSize) = bufferAlloc(ret.buffLen+1);
-    ret.buff = buff;
-    ret.buffSize = allocSize;
-    ret.isOwned = true;
+    const buffLen = s0len + s1len;
+    var (buff, buffSize) = bufferAlloc(buffLen+1);
 
-    bufferMemcpy(dst=ret.buff, src_loc=s0.locale_id, src=s0.buff, len=s0len);
-    bufferMemcpy(dst=ret.buff, src_loc=s1.locale_id, src=s1.buff, len=s1len,
+    bufferMemcpy(dst=buff, src_loc=s0.locale_id, src=s0.buff, len=s0len);
+    bufferMemcpy(dst=buff, src_loc=s1.locale_id, src=s1.buff, len=s1len,
                  dst_off=s0len);
-    ret.buff[ret.buffLen] = 0;
+    buff[buffLen] = 0;
+
+    var ret: t;
+    if t == string {
+      ret.cachedNumCodepoints = s0.cachedNumCodepoints + s1.cachedNumCodepoints;
+    }
+    initWithOwnedBuffer(ret, buff, buffLen, buffSize);
     return ret;
   }
 
@@ -714,4 +945,44 @@ module BytesStringCommon {
     }
     return hash:uint;
   }
+
+  private proc incrementCodepoints(ref lhs: string, rhs: string) {
+    if(lhs.cachedNumCodepoints == -1 || rhs.cachedNumCodepoints == -1) {
+      lhs.cachedNumCodepoints = -1;
+    } else {
+      lhs.cachedNumCodepoints = lhs.cachedNumCodepoints + rhs.cachedNumCodepoints;
+    }
+  }
+
+  proc countNumCodepoints(x: string) {
+    var ret: int;
+    on __primitive("chpl_on_locale_num",
+                   chpl_buildLocaleID(x.locale_id, c_sublocid_any)) {
+      ret = countNumCodepoints(x.buff, x.buffLen);
+    }
+    return ret;
+  }
+
+  proc countNumCodepoints(buff: bufferType, buffLen: int) {
+    var n = 0;
+    var i = 0;
+    while i < buffLen {
+      i += 1;
+      while i < buffLen && !isInitialByte(buff[i]) do
+        i += 1;
+      n += 1;
+    }
+    return n;
+  }
+
+  /*
+    Returns true if the argument is a valid initial byte of a UTF-8
+    encoded multibyte character.
+  */
+  pragma "no doc"
+  inline proc isInitialByte(b: uint(8)) : bool {
+    return (b & 0xc0) != 0x80;
+  }
+
+
 }

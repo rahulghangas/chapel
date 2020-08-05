@@ -26,6 +26,7 @@
 #include "passes.h"
 
 #include "astutil.h"
+#include "autoLocalAccess.h"
 #include "build.h"
 #include "DecoratedClassType.h"
 #include "driver.h"
@@ -122,6 +123,9 @@ static bool        firstConstructorWarning = true;
 ************************************** | *************************************/
 
 void normalize() {
+
+  autoLocalAccess();
+
   insertModuleInit();
 
   transformLogicalShortCircuit();
@@ -237,6 +241,11 @@ void normalize() {
         if (!notDeinit && fn->hasFlag(FLAG_NO_PARENS)) {
           USR_FATAL_CONT(fn, "deinitializers must have parentheses");
         }
+
+        if (ct == NULL)
+          USR_FATAL_CONT(fn, "deinit may not be defined for types other than record, union, or class");
+        else if (ct->symbol->hasFlag(FLAG_EXTERN))
+          USR_FATAL_CONT(fn, "deinit may not be currently defined for extern types");
 
         fn->name = astrDeinit;
       }
@@ -636,6 +645,12 @@ void checkUseBeforeDefs(FnSymbol* fn) {
             isFnSymbol(fn->defPoint->parentSymbol) == false &&
             isUseStmt(se->parentExpr)              == false &&
             isImportStmt(se->parentExpr)           == false) {
+
+          if (CallExpr* call = toCallExpr(se->parentExpr)) {
+            if (call->isPrimitive(PRIM_REFERENCED_MODULES_LIST)) {
+              continue;
+            }
+          }
           SymExpr* prev = toSymExpr(se->prev);
 
           if (prev == NULL || prev->symbol() != gModuleToken) {
@@ -2184,7 +2199,7 @@ static void insertCallTempsWithStmt(CallExpr* call, Expr* stmt) {
     // as a sub-expression for a variable initialization.
     // This flag triggers autoCopy/autoDestroy behavior.
     if (parentCall == NULL ||
-        (parentCall->isNamed("chpl__initCopy")  == false &&
+        (parentCall->isNamedAstr(astr_initCopy)  == false &&
          parentCall->isPrimitive(PRIM_INIT_VAR) == false &&
          parentCall->isPrimitive(PRIM_INIT_VAR_SPLIT_INIT) == false)) {
       tmp->addFlag(FLAG_EXPR_TEMP);
@@ -2268,7 +2283,7 @@ static void evaluateAutoDestroy(CallExpr* call, VarSymbol* tmp) {
   //   The expansion of _build_tuple() creates temps that need to be
   //   autoDestroyed.  This is a short-cut to arrange for that to occur.
   //   A better long term solution would be preferred
-  if (call->isNamed("chpl__initCopy")     == true &&
+  if (call->isNamedAstr(astr_initCopy)     == true &&
       parentCall                          != NULL &&
       parentCall->isNamed("_build_tuple") == true) {
     tmp->addFlag(FLAG_INSERT_AUTO_DESTROY);
@@ -3042,6 +3057,8 @@ static void hack_resolve_types(ArgSymbol* arg) {
           se = toSymExpr(arg->defaultExpr->body.tail);
         if (!se || se->symbol() != gTypeDefaultToken) {
           SET_LINENO(arg->defaultExpr);
+          // MPF: this seems wrong since the result is a value not
+          // a type.
           arg->typeExpr = arg->defaultExpr->copy();
           insert_help(arg->typeExpr, NULL, arg);
         }
@@ -3311,6 +3328,7 @@ static void fixupExportedArrayFormals(FnSymbol* fn) {
           formal->typeExpr->replace(
             new BlockStmt(new SymExpr(dtCFI_cdesc_t->symbol)));
           formal->intent = INTENT_REF;
+          formal->originalIntent = INTENT_REF;
         }
       } else {
         // Create a representation of the array argument that is accessible
@@ -4219,14 +4237,24 @@ static bool isConstructor(FnSymbol* fn) {
 }
 
 static void updateInitMethod(FnSymbol* fn) {
-  if (isAggregateType(fn->_this->type) == true) {
+  Type* thisType = fn->_this->type;
+
+  if (isAggregateType(thisType) == true) {
+
+    if (fn->name == astrInitEquals) {
+      if (isClass(thisType))
+        USR_FATAL_CONT(fn, "init= may not be defined on class types");
+      if (thisType->symbol->hasFlag(FLAG_EXTERN))
+        USR_FATAL_CONT(fn, "init= may not currently be defined on extern types");
+    }
+
     preNormalizeInitMethod(fn);
 
-  } else if (fn->_this->type == dtUnknown) {
+  } else if (thisType == dtUnknown) {
     INT_FATAL(fn, "'this' argument has unknown type");
 
   } else {
-    INT_FATAL(fn, "initializer on non-class type");
+    USR_FATAL_CONT(fn, "initializers may currently only be defined on class, record, or union types");
   }
 }
 
